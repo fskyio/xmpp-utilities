@@ -1,0 +1,14 @@
+[Container]
+AutoUpdate=registry
+ContainerName=xmpp-utilities
+DropCapability=ALL
+EnvironmentFile=.env
+Image=foundry.fsky.io/telepath/xmpp-utilities:latest
+NoNewPrivileges=true
+ReadOnly=true
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target
