@@ -21,7 +21,7 @@ COMMAND_PREFIX = "!xmpp"
 class AppConfig:
     jid: str
     password: str
-    muc_jids: list[str]
+    muc_jids: tuple[str, ...]
     nick: str
 
     @classmethod
@@ -48,7 +48,7 @@ class AppConfig:
                 "Missing required environment variables: " + ", ".join(missing)
             )
 
-        return cls(jid=jid, password=password, muc_jids=muc_jids, nick=nick)
+        return cls(jid=jid, password=password, muc_jids=tuple(muc_jids), nick=nick)
 
 
 class XMPPUtilities(slixmpp.ClientXMPP):
@@ -62,11 +62,12 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         "support-addresses",
     }
 
-    def __init__(self, jid: str, password: str, muc_jids: list[str], nick: str) -> None:
+    def __init__(self, jid: str, password: str, muc_jids: tuple[str, ...], nick: str) -> None:
         super().__init__(jid, password)
         self.muc_jids = muc_jids
         self.nick = nick
         self._shutdown_requested = False
+        self._resolver = dns.asyncresolver.Resolver()
 
         self.add_event_handler("session_start", self.start)
         self.add_event_handler("groupchat_message", self.muc_message)
@@ -179,9 +180,6 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         version = software_version["version"] or "unknown"
         os_name = software_version["os"]
 
-        if not name and not version:
-            return f"No version information found for {argument}."
-
         if os_name:
             return f"{argument} is running {name} {version} on {os_name}."
         return f"{argument} is running {name} {version}."
@@ -274,7 +272,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                     identity_str += f" ({name})"
                 lines.append(identity_str)
 
-        features = sorted(list(info["features"]))
+        features = sorted(info["features"])
         if features:
             lines.append("\nFeatures:")
             for feature in features:
@@ -344,13 +342,11 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             ("Server-to-Server (Direct TLS)", "_xmpps-server._tcp"),
         ]
 
-        resolver = dns.asyncresolver.Resolver()
-
         for label, prefix in records_to_check:
             name = f"{prefix}.{domain}"
             lines.append(f"\n{label} ({prefix}):")
             try:
-                answers = await resolver.resolve(name, "SRV")
+                answers = await self._resolver.resolve(name, "SRV")
                 records = []
                 for rdata in answers:
                     records.append(
@@ -358,9 +354,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                     )
                 for r in sorted(records):
                     lines.append(f"  - {r}")
-            except dns.resolver.NXDOMAIN:
-                lines.append("  - No records found")
-            except dns.resolver.NoAnswer:
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
                 lines.append("  - No records found")
             except Exception as e:
                 LOGGER.warning("DNS lookup failed for %s: %s", name, e)
@@ -426,7 +420,7 @@ def main() -> None:
 
     xmpp = XMPPUtilities(config.jid, config.password, config.muc_jids, config.nick)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
     connect_result = loop.run_until_complete(xmpp.connect())
     if connect_result is False:
         LOGGER.warning(
