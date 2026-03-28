@@ -418,9 +418,10 @@ def main() -> None:
         LOGGER.error("Invalid configuration: %s", exc)
         raise SystemExit(2) from exc
 
-    xmpp = XMPPUtilities(config.jid, config.password, config.muc_jids, config.nick)
-
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    xmpp = XMPPUtilities(config.jid, config.password, config.muc_jids, config.nick)
     connect_result = loop.run_until_complete(xmpp.connect())
     if connect_result is False:
         LOGGER.warning(
