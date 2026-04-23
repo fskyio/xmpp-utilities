@@ -2,7 +2,7 @@ FROM python:3.14-alpine
 
 WORKDIR /app
 
-COPY main.py .
-RUN python -m pip install --no-cache-dir slixmpp dnspython
+COPY pyproject.toml src/ .
+RUN pip install --no-cache-dir .
 
-CMD ["python", "main.py"]
+CMD ["xmpp-utilities"]

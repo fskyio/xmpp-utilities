@@ -40,8 +40,6 @@ class AppConfig:
             missing.append("XMPP_UTILS_JID")
         if not password:
             missing.append("XMPP_UTILS_PASSWORD")
-        if not muc_jids:
-            missing.append("XMPP_UTILS_MUCS")
 
         if missing:
             raise ValueError(
@@ -62,7 +60,9 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         "support-addresses",
     }
 
-    def __init__(self, jid: str, password: str, muc_jids: tuple[str, ...], nick: str) -> None:
+    def __init__(
+        self, jid: str, password: str, muc_jids: tuple[str, ...], nick: str
+    ) -> None:
         super().__init__(jid, password)
         self.muc_jids = muc_jids
         self.nick = nick

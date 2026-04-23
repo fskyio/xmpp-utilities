@@ -22,7 +22,7 @@ The bot responds to commands prefixed with `!xmpp` in both direct messages and c
 
 The bot is configured using environment variables. You can copy `.env.example` to `.env` and fill in your details:
 
-```bash
+```sh
 cp .env.example .env
 # Edit .env with your credentials
 ```
@@ -31,50 +31,97 @@ cp .env.example .env
 |----------|-------------|----------|---------|
 | `XMPP_UTILS_JID` | The JID of the bot account (e.g., `bot@example.com`). | Yes | - |
 | `XMPP_UTILS_PASSWORD` | The password for the bot account. | Yes | - |
-| `XMPP_UTILS_MUCS` | A comma-separated list of MUC JIDs to join. | Yes | - |
-| `XMPP_UTILS_NICK` | The nickname to use in MUCs. | No | `XMPP utilities` |
+| `XMPP_UTILS_MUCS` | A comma-separated list of MUC JIDs to join. | No | - |
+| `XMPP_UTILS_NICK` | The nickname to use in MUCs. | No | `XMPP Utilities` |
 
-## Getting Started
+## Requirements
 
-### Prerequisites
+- Python 3.13+
+- slixmpp
+- dnspython
 
-- Python 3.13 or newer
-- [uv](https://github.com/astral-sh/uv) (recommended for dependency management)
+## Installation
 
-### Running locally
+### pip/pipx (PyPI)
+
+You can install XMPP Utilities from PyPI with pip:
+
+```sh
+pip install xmpp-utilities
+```
+
+Or with pipx for an isolated environment:
+
+```sh
+pipx install xmpp-utilities
+```
+
+### pip/pipx (FSKY Foundry)
+
+To download the package from FSKY Foundry instead of PyPI:
+
+```sh
+pip install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/telepath/pypi/simple --extra-index-url https://pypi.org/simple"
+```
+
+Or with pipx:
+
+```sh
+pipx install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/telepath/pypi/simple --extra-index-url https://pypi.org/simple"
+```
+
+### From wheel
+
+Download the wheel from the [releases page](https://foundry.fsky.io/telepath/xmpp-utilities/releases) and install with pip:
+
+```sh
+pip install xmpp_utilities-*.whl
+```
+
+## Running
+
+### Installed package
+
+After installing, set the environment variables and run the bot:
+
+```sh
+export XMPP_UTILS_JID="xmpp-utilities@telepath.im"
+export XMPP_UTILS_PASSWORD="your-password"
+xmpp-utilities
+```
+
+### Local development
+
+Requires [uv](https://github.com/astral-sh/uv).
 
 1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/xmpp-utilities.git
+   ```sh
+   git clone https://foundry.fsky.io/telepath/xmpp-utilities.git
    cd xmpp-utilities
    ```
 
 2. Install dependencies:
-   ```bash
+   ```sh
    uv sync
    ```
 
 3. Set the environment variables and run the bot:
-   ```bash
-   export XMPP_UTILS_JID="your-jid@example.com"
+   ```sh
+   export XMPP_UTILS_JID="xmpp-utilities@telepath.im"
    export XMPP_UTILS_PASSWORD="your-password"
-   export XMPP_UTILS_MUCS="room@conference.example.com"
-   uv run main.py
+   uv run xmpp-utilities
    ```
-
-## Deployment
 
 ### Container (Docker/Podman)
 
 A container image is available for this project.
 
-```bash
+```sh
 podman run -d \
   --name xmpp-utilities \
-  -e XMPP_UTILS_JID="your-jid@example.com" \
+  -e XMPP_UTILS_JID="xmpp-utilities@telepath.im" \
   -e XMPP_UTILS_PASSWORD="your-password" \
-  -e XMPP_UTILS_MUCS="room@conference.example.com" \
-  foundry.fsky.io/telepath/xmpp-utilities
+  foundry.fsky.io/telepath/xmpp-utilities:latest
 ```
 
 ### Systemd Quadlet
@@ -83,7 +130,7 @@ A Quadlet file is available at `contrib/quadlet/xmpp-utilities.container`. You c
 
 Edit the file to suit your needs, place it into `~/.config/containers/systemd/` or `/etc/containers/systemd/`, and run:
 
-```bash
+```sh
 systemctl --user daemon-reload
 systemctl --user start xmpp-utilities
 ```
