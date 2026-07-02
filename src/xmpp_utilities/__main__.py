@@ -14,8 +14,8 @@ from slixmpp.exceptions import IqError, IqTimeout
 from slixmpp.plugins.xep_0004.stanza import Form
 
 __version__ = "1.1.0"
-__homepage__ = "https://telepath.im/projects/xmpp-utilities/"
-__repository__ = "https://foundry.fsky.io/telepath/xmpp-utilities.git"
+__homepage__ = "https://fsky.io/projects/xmpp-utilities/"
+__repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_PREFIX = "!xmpp"

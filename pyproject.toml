@@ -6,7 +6,7 @@ readme = "README.md"
 license = "Unlicense"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Telepath", email = "development@telepath.im" }
+    { name = "FSKY", email = "development@fsky.io" }
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -30,15 +30,15 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://telepath.im/projects/xmpp-utilities/"
-Repository = "https://foundry.fsky.io/telepath/xmpp-utilities.git"
-Issues = "https://foundry.fsky.io/telepath/xmpp-utilities/issues"
+Homepage = "https://fsky.io/projects/xmpp-utilities/"
+Repository = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
+Issues = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
 
 [project.scripts]
 xmpp-utilities = "xmpp_utilities.__main__:main"
 
 [[tool.uv.index]]
 name = "foundry"
-url = "https://foundry.fsky.io/api/packages/telepath/pypi/simple/"
-publish-url = "https://foundry.fsky.io/api/packages/telepath/pypi/"
+url = "https://foundry.fsky.io/api/packages/fsky/pypi/simple/"
+publish-url = "https://foundry.fsky.io/api/packages/fsky/pypi/"
 explicit = true

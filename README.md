@@ -61,18 +61,18 @@ pipx install xmpp-utilities
 To download the package from FSKY Foundry instead of PyPI:
 
 ```sh
-pip install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/telepath/pypi/simple --extra-index-url https://pypi.org/simple"
+pip install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/fsky/pypi/simple --extra-index-url https://pypi.org/simple"
 ```
 
 Or with pipx:
 
 ```sh
-pipx install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/telepath/pypi/simple --extra-index-url https://pypi.org/simple"
+pipx install xmpp-utilities --pip-args="--index-url https://foundry.fsky.io/api/packages/fsky/pypi/simple --extra-index-url https://pypi.org/simple"
 ```
 
 ### From wheel
 
-Download the wheel from the [releases page](https://foundry.fsky.io/telepath/xmpp-utilities/releases) and install with pip:
+Download the wheel from the [releases page](https://foundry.fsky.io/fsky/xmpp-utilities/releases) and install with pip:
 
 ```sh
 pip install xmpp_utilities-*.whl
@@ -96,7 +96,7 @@ Requires [uv](https://github.com/astral-sh/uv).
 
 1. Clone the repository:
    ```sh
-   git clone https://foundry.fsky.io/telepath/xmpp-utilities.git
+   git clone https://foundry.fsky.io/fsky/xmpp-utilities.git
    cd xmpp-utilities
    ```
 
@@ -121,7 +121,7 @@ podman run -d \
   --name xmpp-utilities \
   -e XMPP_UTILS_JID="xmpp-utilities@telepath.im" \
   -e XMPP_UTILS_PASSWORD="your-password" \
-  foundry.fsky.io/telepath/xmpp-utilities:latest
+  foundry.fsky.io/fsky/xmpp-utilities:latest
 ```
 
 ### Systemd Quadlet
