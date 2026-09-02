@@ -4,6 +4,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -19,6 +20,113 @@ __repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_PREFIX = "!xmpp"
+XEP_COMMAND_PREFIX = "!xep"
+XEP_XML_URL = "https://xmpp.org/extensions/xep-{number}.xml"
+XEP_PAGE_URL = "https://xmpp.org/extensions/xep-{number}.html"
+
+
+@dataclass(frozen=True)
+class XEPInfo:
+    number: str
+    title: str
+    abstract: str
+    authors: tuple[str, ...]
+    status: str
+    type: str
+
+    @property
+    def page_url(self) -> str:
+        return XEP_PAGE_URL.format(number=self.number)
+
+
+def normalize_xep_number(value: str) -> str | None:
+    """Return a four-digit XEP number from common user-facing spellings."""
+    patterns = (
+        r"(?:https?://)?(?:www\.)?xmpp\.org/extensions/xep[-_](\d{1,4})(?:\.(?:html|xml))?/?",
+        r"(?:xep)?[\s._:#/\-\u2010\u2011\u2012\u2013\u2014\u2015]*(\d{1,4})",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, value.strip(), flags=re.IGNORECASE)
+        if match:
+            number = int(match.group(1))
+            if number > 0:
+                return f"{number:04d}"
+    return None
+
+
+def _element_text(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    return " ".join("".join(element.itertext()).split())
+
+
+def parse_xep_document(document: bytes, requested_number: str) -> XEPInfo:
+    root = ET.fromstring(document)
+    header = root.find("header")
+    if header is None:
+        raise ValueError("XEP document has no header")
+
+    number = _element_text(header.find("number")) or requested_number
+    if not number.isdigit():
+        raise ValueError("XEP document has an invalid number")
+    number = f"{int(number):04d}"
+
+    title = _element_text(header.find("title"))
+    abstract = _element_text(header.find("abstract"))
+    status = _element_text(header.find("status"))
+    xep_type = _element_text(header.find("type"))
+    if not all((title, abstract, status, xep_type)):
+        raise ValueError("XEP document is missing required metadata")
+
+    authors = []
+    for author in header.findall("author"):
+        name = " ".join(
+            part
+            for part in (
+                _element_text(author.find("firstname")),
+                _element_text(author.find("surname")),
+            )
+            if part
+        )
+        if not name:
+            name = _element_text(author.find("name"))
+        if name:
+            authors.append(name)
+
+    return XEPInfo(
+        number=number,
+        title=title,
+        abstract=abstract,
+        authors=tuple(authors),
+        status=status,
+        type=xep_type,
+    )
+
+
+def fetch_xep(number: str) -> XEPInfo:
+    url = XEP_XML_URL.format(number=number)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/xml, text/xml;q=0.9",
+            "User-Agent": f"xmpp-utilities/{__version__}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return parse_xep_document(response.read(), number)
+
+
+def format_xep_response(xep: XEPInfo) -> str:
+    heading = f"XEP-{xep.number}: {xep.title}"
+    authors = ", ".join(xep.authors) if xep.authors else "Unknown"
+    return (
+        f"*{heading}*\n"
+        f"{xep.abstract}\n"
+        f"Authors: {authors}\n"
+        f"Status: {xep.status}\n"
+        f"Type: {xep.type}\n"
+        f"{xep.page_url}"
+    )
 
 
 @dataclass(frozen=True)
@@ -95,6 +203,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             "uptime": self.cmd_uptime,
             "srv": self.cmd_srv,
             "compliance": self.cmd_compliance,
+            "xep": self.cmd_xep,
         }
 
     def request_shutdown(self) -> None:
@@ -118,15 +227,22 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
     async def muc_message(self, msg: slixmpp.Message) -> None:
         body = (msg["body"] or "").strip()
-        if msg["mucnick"] == self.nick or not body.startswith(COMMAND_PREFIX):
+        if msg["mucnick"] == self.nick or not self.is_command_message(body):
             return
 
         response = await self.handle_command(body)
-        self.send_message(mto=msg["from"].bare, mbody=response, mtype="groupchat")
+        self.send_message(
+            mto=msg["from"].bare,
+            mbody=response,
+            mtype="groupchat",
+        )
 
     async def dm_message(self, msg: slixmpp.Message) -> None:
         body = (msg["body"] or "").strip()
-        if msg["type"] not in ("chat", "normal") or not body.startswith(COMMAND_PREFIX):
+        if (
+            msg["type"] not in ("chat", "normal")
+            or not self.is_command_message(body)
+        ):
             return
 
         response = await self.handle_command(body)
@@ -144,9 +260,21 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         return await handler(argument)
 
     @staticmethod
+    def is_command_message(body: str) -> bool:
+        first_word = body.strip().split(maxsplit=1)[0].lower() if body.strip() else ""
+        return first_word in (COMMAND_PREFIX, XEP_COMMAND_PREFIX)
+
+    @staticmethod
     def parse_command(body: str) -> tuple[str | None, str | None]:
+        parts = body.strip().split(maxsplit=1)
+        if parts and parts[0].lower() == XEP_COMMAND_PREFIX:
+            argument = (
+                parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+            )
+            return "xep", argument
+
         parts = body.strip().split(maxsplit=2)
-        if len(parts) < 2:
+        if len(parts) < 2 or parts[0].lower() != COMMAND_PREFIX:
             return None, None
         command = parts[1].strip().lower()
         argument = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
@@ -163,8 +291,38 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             f"{COMMAND_PREFIX} uptime <jid> - shows the uptime of an XMPP entity.\n"
             f"{COMMAND_PREFIX} srv <domain> - performs DNS SRV lookups for XMPP services.\n"
             f"{COMMAND_PREFIX} compliance <domain> - shows the compliance score of a server.\n"
+            f"{COMMAND_PREFIX} xep <number> - shows information about an XMPP Extension Protocol "
+            f"(alias: {XEP_COMMAND_PREFIX} <number>).\n"
             f"{COMMAND_PREFIX} help - displays this message."
         )
+
+    async def cmd_xep(self, argument: str | None) -> str:
+        if not argument:
+            return (
+                f"{COMMAND_PREFIX} xep - shows information about an XMPP Extension Protocol.\n"
+                f"Usage: {COMMAND_PREFIX} xep <number> "
+                f"(alias: {XEP_COMMAND_PREFIX} <number>)"
+            )
+
+        number = normalize_xep_number(argument)
+        if number is None:
+            return (
+                f'Invalid XEP number: "{argument}". '
+                f"Try {COMMAND_PREFIX} xep 516 or {COMMAND_PREFIX} xep XEP-0516."
+            )
+
+        try:
+            xep = await asyncio.to_thread(fetch_xep, number)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return f"XEP-{number} was not found."
+            LOGGER.warning("XEP lookup failed for %s: HTTP %s", number, exc.code)
+            return f"Could not retrieve XEP-{number}: HTTP {exc.code}"
+        except (ET.ParseError, ValueError, urllib.error.URLError, TimeoutError) as exc:
+            LOGGER.warning("XEP lookup failed for %s: %s", number, exc)
+            return f"Could not retrieve XEP-{number}. Please try again later."
+
+        return format_xep_response(xep)
 
     async def cmd_version(self, argument: str | None) -> str:
         if not argument:

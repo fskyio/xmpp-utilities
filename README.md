@@ -4,7 +4,8 @@ XMPP Utilities is a simple XMPP bot that provides various diagnostic and informa
 
 ## Features
 
-The bot responds to commands prefixed with `!xmpp` in both direct messages and configured Multi-User Chats (MUCs).
+The bot responds to `!xmpp` commands in both direct
+messages and configured Multi-User Chats (MUCs).
 
 ### Available Commands
 
@@ -17,6 +18,10 @@ The bot responds to commands prefixed with `!xmpp` in both direct messages and c
 - `!xmpp uptime <jid>` - Shows the uptime of an XMPP entity (XEP-0012).
 - `!xmpp srv <domain>` - Performs DNS SRV lookups for XMPP services (`_xmpp-client`, `_xmpp-server`, etc.).
 - `!xmpp compliance <domain>` - Shows the compliance score of a server from [compliance.conversations.im](https://compliance.conversations.im/).
+- `!xmpp xep <number>` - Shows the title, abstract, authors, status, type, and link for an XMPP Extension Protocol. The shorter `!xep <number>` alias also works.
+
+The XEP lookup accepts common number formats such as `516`, `0516`, `XEP516`,
+`XEP-516`, and `XEP-0516`. Its title uses XEP-0393 strong-emphasis formatting.
 
 ## Configuration
 
