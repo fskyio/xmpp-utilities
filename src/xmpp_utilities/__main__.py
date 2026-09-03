@@ -5,14 +5,25 @@ import re
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import ClassVar
 
 import dns.asyncresolver
+import dns.exception
+import dns.flags
 import dns.resolver
 import slixmpp
 from slixmpp.exceptions import IqError, IqTimeout
 from slixmpp.plugins.xep_0004.stanza import Form
+
+from .dane import (
+    XMPP_SERVICES,
+    discover_dane,
+    format_dane_report,
+    parse_dane_argument,
+    validate_dane,
+)
 
 __version__ = "1.1.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
@@ -162,7 +173,7 @@ class AppConfig:
 
 
 class XMPPUtilities(slixmpp.ClientXMPP):
-    CONTACT_FIELDS = {
+    CONTACT_FIELDS: ClassVar[set[str]] = {
         "abuse-addresses",
         "admin-addresses",
         "feedback-addresses",
@@ -180,6 +191,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.nick = nick
         self._shutdown_requested = False
         self._resolver = dns.asyncresolver.Resolver()
+        self._resolver.flags = dns.flags.RD | dns.flags.AD
+        self._dane_validation_lock = asyncio.Lock()
 
         self.add_event_handler("session_start", self.start)
         self.add_event_handler("groupchat_message", self.muc_message)
@@ -202,6 +215,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             "ping": self.cmd_ping,
             "uptime": self.cmd_uptime,
             "srv": self.cmd_srv,
+            "tlsa": self.cmd_tlsa,
+            "dane": self.cmd_tlsa,
             "compliance": self.cmd_compliance,
             "xep": self.cmd_xep,
         }
@@ -290,6 +305,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             f"{COMMAND_PREFIX} ping <jid> - pings an XMPP entity and reports the round-trip time.\n"
             f"{COMMAND_PREFIX} uptime <jid> - shows the uptime of an XMPP entity.\n"
             f"{COMMAND_PREFIX} srv <domain> - performs DNS SRV lookups for XMPP services.\n"
+            f"{COMMAND_PREFIX} tlsa <domain> [--no-validate] - shows and validates "
+            "DANE TLSA records for XMPP services (alias: dane).\n"
             f"{COMMAND_PREFIX} compliance <domain> - shows the compliance score of a server.\n"
             f"{COMMAND_PREFIX} xep <number> - shows information about an XMPP Extension Protocol "
             f"(alias: {XEP_COMMAND_PREFIX} <number>).\n"
@@ -497,14 +514,9 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         domain = argument.strip()
         lines = [f"SRV records for {domain}:"]
 
-        records_to_check = [
-            ("Client-to-Server", "_xmpp-client._tcp"),
-            ("Client-to-Server (Direct TLS)", "_xmpps-client._tcp"),
-            ("Server-to-Server", "_xmpp-server._tcp"),
-            ("Server-to-Server (Direct TLS)", "_xmpps-server._tcp"),
-        ]
-
-        for label, prefix in records_to_check:
+        for service in XMPP_SERVICES:
+            label = service.label
+            prefix = service.prefix
             name = f"{prefix}.{domain}"
             lines.append(f"\n{label} ({prefix}):")
             try:
@@ -518,11 +530,38 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                     lines.append(f"  - {r}")
             except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
                 lines.append("  - No records found")
-            except Exception as e:
+            except dns.exception.DNSException as e:
                 LOGGER.warning("DNS lookup failed for %s: %s", name, e)
                 lines.append(f"  - Lookup failed: {e}")
 
         return "\n".join(lines)
+
+    async def cmd_tlsa(self, argument: str | None) -> str:
+        if not argument:
+            return (
+                f"{COMMAND_PREFIX} tlsa - shows DANE TLSA records for XMPP services.\n"
+                f"Usage: {COMMAND_PREFIX} tlsa <domain> [--no-validate] "
+                f"(alias: {COMMAND_PREFIX} dane)"
+            )
+
+        parsed = parse_dane_argument(argument)
+        if parsed is None:
+            return (
+                f'Invalid TLSA lookup arguments: "{argument}". '
+                f"Usage: {COMMAND_PREFIX} tlsa <domain> [--no-validate]"
+            )
+        domain, should_validate = parsed
+
+        if not should_validate:
+            report = await discover_dane(self._resolver, domain)
+            return format_dane_report(report)
+
+        if self._dane_validation_lock.locked():
+            return "A DANE validation is already running. Please try again shortly."
+        async with self._dane_validation_lock:
+            report = await discover_dane(self._resolver, domain)
+            report = await validate_dane(self._resolver, report)
+        return format_dane_report(report)
 
     async def cmd_compliance(self, argument: str | None) -> str:
         if not argument:
@@ -559,7 +598,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             return f"Could not parse compliance badge for {domain}."
         except urllib.error.HTTPError as e:
             return f"Error fetching compliance score for {domain}: HTTP {e.code}"
-        except Exception as e:
+        except (urllib.error.URLError, TimeoutError, UnicodeError) as e:
             LOGGER.warning("Compliance lookup failed for %s: %s", domain, e)
             return f"Error fetching compliance score for {domain}: {e}"
 

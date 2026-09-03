@@ -25,7 +25,7 @@ classifiers = [
 keywords = ["xmpp", "xmpp bot", "slixmpp", "bot"]
 requires-python = ">=3.13"
 dependencies = [
-    "dnspython>=2.8.0",
+    "dnspython[dnssec]>=2.8.0",
     "slixmpp>=1.12.0",
 ]
 

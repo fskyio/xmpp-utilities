@@ -17,11 +17,20 @@ messages and configured Multi-User Chats (MUCs).
 - `!xmpp ping <jid>` - Pings an XMPP entity and reports the round-trip time (XEP-0199).
 - `!xmpp uptime <jid>` - Shows the uptime of an XMPP entity (XEP-0012).
 - `!xmpp srv <domain>` - Performs DNS SRV lookups for XMPP services (`_xmpp-client`, `_xmpp-server`, etc.).
+- `!xmpp tlsa <domain> [--no-validate]` - Shows and validates DANE TLSA records for the domain's XMPP endpoints. `!xmpp dane` is an alias.
 - `!xmpp compliance <domain>` - Shows the compliance score of a server from [compliance.conversations.im](https://compliance.conversations.im/).
 - `!xmpp xep <number>` - Shows the title, abstract, authors, status, type, and link for an XMPP Extension Protocol. The shorter `!xep <number>` alias also works.
 
 The XEP lookup accepts common number formats such as `516`, `0516`, `XEP516`,
 `XEP-516`, and `XEP-0516`. Its title uses XEP-0393 strong-emphasis formatting.
+
+The TLSA lookup follows each XMPP SRV record and queries the TLSA name derived
+from its target and port, as specified by
+[RFC 7673](https://www.rfc-editor.org/rfc/rfc7673.html). It covers client and
+server connections using either STARTTLS or direct TLS (XEP-0368). It connects
+to each public endpoint and checks its certificate against usable TLSA records
+by default; add `--no-validate` for a DNS-only lookup. DNSSEC results come from
+the bot's configured validating resolver.
 
 ## Configuration
 
@@ -43,7 +52,7 @@ cp .env.example .env
 
 - Python 3.13+
 - slixmpp
-- dnspython
+- dnspython with its DNSSEC dependencies
 
 ## Installation
 
