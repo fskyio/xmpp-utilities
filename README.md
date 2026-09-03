@@ -153,4 +153,4 @@ systemctl --user start xmpp-utilities
 
 ## License
 
-This project is released into the public domain under the [Unlicense](LICENSE).
+This project is licensed under the [Zero-Clause BSD License (0BSD)](LICENSE).

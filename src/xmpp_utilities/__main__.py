@@ -29,7 +29,7 @@ __version__ = "1.1.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
 __repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
 __issues__ = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
-__license__ = "Unlicense"
+__license__ = "0BSD"
 
 BOT_NAME = "XMPP Utilities"
 BOT_DESCRIPTION = "An XMPP bot with diagnostics and monitoring tools."

@@ -3,7 +3,7 @@ name = "xmpp-utilities"
 version = "1.1.0"
 description = "An XMPP bot with diagnostics and monitoring tools"
 readme = "README.md"
-license = "Unlicense"
+license = "0BSD"
 license-files = ["LICENSE"]
 authors = [
     { name = "FSKY", email = "development@fsky.io" }
