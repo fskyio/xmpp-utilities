@@ -28,6 +28,11 @@ from .dane import (
 __version__ = "1.1.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
 __repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
+__issues__ = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
+__license__ = "Unlicense"
+
+BOT_NAME = "XMPP Utilities"
+BOT_DESCRIPTION = "An XMPP bot with diagnostics and monitoring tools."
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_PREFIX = "!xmpp"
@@ -208,6 +213,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
         self.commands: dict[str, Callable[[str | None], Awaitable[str]]] = {
             "help": self.cmd_help,
+            "about": self.cmd_about,
             "version": self.cmd_version,
             "items": self.cmd_items,
             "contact": self.cmd_contact,
@@ -264,6 +270,13 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         msg.reply(response).send()
 
     async def handle_command(self, body: str) -> str:
+        if body.strip().lower() == COMMAND_PREFIX:
+            return (
+                f"{BOT_NAME} {__version__} - diagnostics and monitoring tools for XMPP. "
+                f'Use "{COMMAND_PREFIX} about" for details or '
+                f'"{COMMAND_PREFIX} help" for commands.'
+            )
+
         command, argument = self.parse_command(body)
         if not command:
             return f'Use "{COMMAND_PREFIX} help" to list all commands.'
@@ -298,6 +311,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
     async def cmd_help(self, _argument: str | None) -> str:
         return (
             "Available commands:\n"
+            f"{COMMAND_PREFIX} about - shows information about this bot.\n"
             f"{COMMAND_PREFIX} version <jid> - shows the version of an XMPP entity.\n"
             f"{COMMAND_PREFIX} items <jid> - shows the items of an XMPP entity.\n"
             f"{COMMAND_PREFIX} contact <jid> - shows the contact information of an XMPP entity.\n"
@@ -311,6 +325,17 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             f"{COMMAND_PREFIX} xep <number> - shows information about an XMPP Extension Protocol "
             f"(alias: {XEP_COMMAND_PREFIX} <number>).\n"
             f"{COMMAND_PREFIX} help - displays this message."
+        )
+
+    async def cmd_about(self, _argument: str | None) -> str:
+        return (
+            f"*{BOT_NAME} {__version__}*\n"
+            f"{BOT_DESCRIPTION}\n"
+            f"Homepage: {__homepage__}\n"
+            f"Repository: {__repository__}\n"
+            f"Issues: {__issues__}\n"
+            f"License: {__license__}\n"
+            f'Use "{COMMAND_PREFIX} help" to list all commands.'
         )
 
     async def cmd_xep(self, argument: str | None) -> str:

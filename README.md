@@ -9,7 +9,9 @@ messages and configured Multi-User Chats (MUCs).
 
 ### Available Commands
 
+- `!xmpp` - Shows a short summary of the bot, including its version.
 - `!xmpp help` - Displays the help message with all available commands.
+- `!xmpp about` - Shows the bot's version, project links, and license.
 - `!xmpp version <jid>` - Shows the software version of an XMPP entity (XEP-0092).
 - `!xmpp items <jid>` - Lists the service items of an XMPP entity (XEP-0030).
 - `!xmpp contact <jid>` - Displays contact information for an XMPP entity (XEP-0030).
