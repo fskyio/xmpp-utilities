@@ -25,7 +25,7 @@ from .dane import (
     validate_dane,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
 __repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
 __issues__ = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
