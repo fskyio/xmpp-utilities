@@ -5,7 +5,9 @@ XMPP Utilities is a simple XMPP bot that provides various diagnostic and informa
 ## Features
 
 The bot responds to `!xmpp` commands in both direct
-messages and configured Multi-User Chats (MUCs).
+messages and configured Multi-User Chats (MUCs). The same
+diagnostics are also available as [XEP-0050](https://xmpp.org/extensions/xep-0050.html)
+ad-hoc commands on the bot's full JID.
 
 ### Available Commands
 
@@ -25,6 +27,12 @@ messages and configured Multi-User Chats (MUCs).
 
 The XEP lookup accepts common number formats such as `516`, `0516`, `XEP516`,
 `XEP-516`, and `XEP-0516`. Its title uses XEP-0393 strong-emphasis formatting.
+
+Clients that support ad-hoc commands can run the same lookups from a form
+instead of typing `!xmpp` commands. Execute the command against the bot's
+full JID (including resource). `!xmpp dane` is only a text alias; the ad-hoc
+command is `tlsa`. `help` is omitted because service discovery already lists
+the available commands.
 
 The TLSA lookup follows each XMPP SRV record and queries the TLSA name derived
 from its target and port, as specified by

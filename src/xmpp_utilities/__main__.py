@@ -46,6 +46,7 @@ COMMAND_PREFIX = "!xmpp"
 XEP_COMMAND_PREFIX = "!xep"
 XEP_XML_URL = "https://xmpp.org/extensions/xep-{number}.xml"
 XEP_PAGE_URL = "https://xmpp.org/extensions/xep-{number}.html"
+ADHOC_COMMANDS_NODE = "http://jabber.org/protocol/commands"
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,154 @@ def format_xep_response(xep: XEPInfo) -> str:
 
 
 @dataclass(frozen=True)
+class AdHocField:
+    var: str
+    ftype: str
+    label: str
+    required: bool = True
+    value: str | bool | None = None
+    desc: str = ""
+
+
+@dataclass(frozen=True)
+class AdHocCommand:
+    node: str
+    name: str
+    command: str
+    instructions: str
+    fields: tuple[AdHocField, ...] = ()
+
+
+ADHOC_COMMANDS: tuple[AdHocCommand, ...] = (
+    AdHocCommand(
+        "about",
+        "About",
+        "about",
+        "Shows information about this bot.",
+    ),
+    AdHocCommand(
+        "version",
+        "Software Version",
+        "version",
+        "Shows the software version of an XMPP entity (XEP-0092).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "items",
+        "Service Items",
+        "items",
+        "Lists the service items of an XMPP entity (XEP-0030).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "contact",
+        "Contact Information",
+        "contact",
+        "Displays contact information for an XMPP entity (XEP-0030).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "info",
+        "Entity Info",
+        "info",
+        "Lists the identities and features of an XMPP entity (XEP-0030).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "ping",
+        "Ping",
+        "ping",
+        "Pings an XMPP entity and reports the round-trip time (XEP-0199).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "uptime",
+        "Uptime",
+        "uptime",
+        "Shows the uptime of an XMPP entity (XEP-0012).",
+        (AdHocField("jid", "jid-single", "JID"),),
+    ),
+    AdHocCommand(
+        "srv",
+        "SRV Lookup",
+        "srv",
+        "Performs DNS SRV lookups for XMPP services.",
+        (AdHocField("domain", "text-single", "Domain"),),
+    ),
+    AdHocCommand(
+        "tlsa",
+        "DANE TLSA",
+        "tlsa",
+        "Shows and validates DANE TLSA records for the domain's XMPP endpoints.",
+        (
+            AdHocField("domain", "text-single", "Domain"),
+            AdHocField(
+                "validate",
+                "boolean",
+                "Validate certificates",
+                required=False,
+                value=True,
+                desc=(
+                    "Connect to each public endpoint and check its certificate "
+                    "against TLSA records."
+                ),
+            ),
+        ),
+    ),
+    AdHocCommand(
+        "compliance",
+        "Compliance Score",
+        "compliance",
+        "Shows the compliance score of a server from compliance.conversations.im.",
+        (AdHocField("domain", "text-single", "Domain"),),
+    ),
+    AdHocCommand(
+        "xep",
+        "XEP Lookup",
+        "xep",
+        "Shows the title, abstract, authors, status, type, and link for an XEP.",
+        (AdHocField("number", "text-single", "XEP number"),),
+    ),
+)
+
+_ADHOC_BY_NODE = {command.node: command for command in ADHOC_COMMANDS}
+
+_FALSE_VALUES = {False, "0", "false"}
+
+
+def adhoc_form_values(payload: object) -> dict[str, object]:
+    if payload is None:
+        return {}
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if isinstance(payload, Form):
+        return payload["values"]
+    return {}
+
+
+def adhoc_argument(spec: AdHocCommand, values: dict[str, object]) -> str | None:
+    if spec.node == "tlsa":
+        domain = str(values.get("domain") or "").strip()
+        if not domain:
+            return None
+        raw = values.get("validate", True)
+        if raw in _FALSE_VALUES:
+            return f"{domain} --no-validate"
+        return domain
+
+    if not spec.fields:
+        return None
+
+    raw = values.get(spec.fields[0].var)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     jid: str
     password: str
@@ -229,6 +378,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.register_plugin("xep_0012")
         self.register_plugin("xep_0030")
         self.register_plugin("xep_0045")
+        self.register_plugin("xep_0050")
         self.register_plugin("xep_0054")
         self.register_plugin("xep_0084")
         self.register_plugin(
@@ -280,12 +430,58 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
     async def start(self, _event: object) -> None:
         await self.advertise_profile()
+        self.register_adhoc_commands()
         await self.plugin["xep_0115"].update_caps()
         self.send_presence(pnick=self.nick)
         await self.get_roster()
         for muc_jid in self.muc_jids:
             LOGGER.info("Joining MUC: %s", muc_jid)
             self.plugin["xep_0045"].join_muc(muc_jid, self.nick)
+
+    def register_adhoc_commands(self) -> None:
+        adhoc = self.plugin["xep_0050"]
+        for spec in ADHOC_COMMANDS:
+            adhoc.add_command(
+                node=spec.node,
+                name=spec.name,
+                handler=self._adhoc_start,
+            )
+
+    async def _adhoc_start(self, _iq: slixmpp.Iq, session: dict) -> dict:
+        spec = _ADHOC_BY_NODE[session["node"]]
+        if not spec.fields:
+            return await self._adhoc_finish(session, spec.command, None)
+
+        form = self.plugin["xep_0004"].make_form(
+            "form", spec.name, spec.instructions
+        )
+        for field in spec.fields:
+            form.add_field(
+                var=field.var,
+                ftype=field.ftype,
+                label=field.label,
+                required=field.required,
+                value=field.value,
+                desc=field.desc,
+            )
+        session["payload"] = form
+        session["next"] = self._adhoc_submit
+        session["has_next"] = False
+        return session
+
+    async def _adhoc_submit(self, payload: object, session: dict) -> dict:
+        spec = _ADHOC_BY_NODE[session["node"]]
+        argument = adhoc_argument(spec, adhoc_form_values(payload))
+        return await self._adhoc_finish(session, spec.command, argument)
+
+    async def _adhoc_finish(
+        self, session: dict, command: str, argument: str | None
+    ) -> dict:
+        result = await self.commands[command](argument)
+        session["notes"] = [("info", result)]
+        session["payload"] = None
+        session["next"] = None
+        return session
 
     def build_vcard(self, avatar: bytes) -> VCardTemp:
         vcard = self.plugin["xep_0054"].make_vcard()
@@ -400,7 +596,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             f"{COMMAND_PREFIX} compliance <domain> - shows the compliance score of a server.\n"
             f"{COMMAND_PREFIX} xep <number> - shows information about an XMPP Extension Protocol "
             f"(alias: {XEP_COMMAND_PREFIX} <number>).\n"
-            f"{COMMAND_PREFIX} help - displays this message."
+            f"{COMMAND_PREFIX} help - displays this message.\n"
+            "These commands are also available as XEP-0050 ad-hoc commands."
         )
 
     async def cmd_about(self, _argument: str | None) -> str:

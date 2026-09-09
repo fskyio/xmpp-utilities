@@ -33,6 +33,7 @@ class AboutCommandTests(unittest.IsolatedAsyncioTestCase):
         response = await XMPPUtilities.cmd_help(None, None)
 
         self.assertIn("!xmpp about", response)
+        self.assertIn("XEP-0050", response)
 
 
 class AboutParsingTests(unittest.TestCase):
