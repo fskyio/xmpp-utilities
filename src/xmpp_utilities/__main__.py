@@ -1,11 +1,13 @@
+import argparse
 import asyncio
 import logging
 import os
 import re
+import tomllib
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -370,6 +372,93 @@ def apply_adhoc_presentation(session: dict, presentation: AdHocPresentation) -> 
     return session
 
 
+DEFAULT_CONFIG_PATH = Path("xmpp-utilities.toml")
+DEFAULT_NICK = BOT_NAME
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="xmpp-utilities", description=BOT_DESCRIPTION)
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        help="Path to a TOML config file",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_config_path(
+    path: Path | None = None,
+    *,
+    default_path: Path = DEFAULT_CONFIG_PATH,
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    if path is not None:
+        return path.expanduser()
+    env = os.environ if environ is None else environ
+    env_path = env.get("XMPP_UTILS_CONFIG", "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    if default_path.is_file():
+        return default_path
+    return None
+
+
+def _require_string(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    return value
+
+
+def _parse_mucs_csv(raw: str) -> tuple[str, ...]:
+    return tuple(muc.strip() for muc in raw.split(",") if muc.strip())
+
+
+def _parse_mucs_toml(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError("mucs must be an array of strings")
+    return tuple(item.strip() for item in value if item.strip())
+
+
+def read_toml_config(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        raise ValueError(f"Config file not found: {path}")
+
+    with path.open("rb") as handle:
+        try:
+            data = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"Invalid TOML in {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid TOML in {path}: expected a table")
+
+    values: dict[str, object] = {}
+    if "jid" in data:
+        values["jid"] = _require_string(data["jid"], "jid").strip()
+    if "password" in data:
+        values["password"] = _require_string(data["password"], "password").strip()
+    if "nick" in data:
+        values["nick"] = _require_string(data["nick"], "nick").strip()
+    if "mucs" in data:
+        values["muc_jids"] = _parse_mucs_toml(data["mucs"])
+    return values
+
+
+def read_env_config(environ: Mapping[str, str] | None = None) -> dict[str, object]:
+    env = os.environ if environ is None else environ
+    values: dict[str, object] = {}
+    if "XMPP_UTILS_JID" in env:
+        values["jid"] = env["XMPP_UTILS_JID"].strip()
+    if "XMPP_UTILS_PASSWORD" in env:
+        values["password"] = env["XMPP_UTILS_PASSWORD"].strip()
+    if "XMPP_UTILS_NICK" in env:
+        values["nick"] = env["XMPP_UTILS_NICK"].strip()
+    if "XMPP_UTILS_MUCS" in env:
+        values["muc_jids"] = _parse_mucs_csv(env["XMPP_UTILS_MUCS"])
+    return values
+
+
 @dataclass(frozen=True)
 class AppConfig:
     jid: str
@@ -378,28 +467,48 @@ class AppConfig:
     nick: str
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
-        jid = os.getenv("XMPP_UTILS_JID", "").strip()
-        password = os.getenv("XMPP_UTILS_PASSWORD", "").strip()
-        raw_mucs = os.getenv("XMPP_UTILS_MUCS", "")
-        nick = (
-            os.getenv("XMPP_UTILS_NICK", "XMPP Utilities").strip() or "XMPP Utilities"
+    def from_mapping(cls, values: Mapping[str, object]) -> "AppConfig":
+        jid = _require_string(values.get("jid", ""), "jid").strip()
+        password = _require_string(values.get("password", ""), "password").strip()
+        nick = _require_string(values.get("nick", DEFAULT_NICK), "nick").strip()
+        muc_jids = values.get("muc_jids", ())
+        if not isinstance(muc_jids, tuple) or not all(
+            isinstance(item, str) for item in muc_jids
+        ):
+            raise ValueError("mucs must be an array of strings")
+
+        missing = [
+            name
+            for name, value in (("jid", jid), ("password", password))
+            if not value
+        ]
+        if missing:
+            raise ValueError("Missing required configuration: " + ", ".join(missing))
+
+        return cls(
+            jid=jid,
+            password=password,
+            muc_jids=muc_jids,
+            nick=nick or DEFAULT_NICK,
         )
 
-        muc_jids = [muc.strip() for muc in raw_mucs.split(",") if muc.strip()]
-
-        missing = []
-        if not jid:
-            missing.append("XMPP_UTILS_JID")
-        if not password:
-            missing.append("XMPP_UTILS_PASSWORD")
-
-        if missing:
-            raise ValueError(
-                "Missing required environment variables: " + ", ".join(missing)
-            )
-
-        return cls(jid=jid, password=password, muc_jids=tuple(muc_jids), nick=nick)
+    @classmethod
+    def load(
+        cls,
+        path: Path | None = None,
+        *,
+        default_path: Path = DEFAULT_CONFIG_PATH,
+        environ: Mapping[str, str] | None = None,
+    ) -> "AppConfig":
+        resolved = resolve_config_path(
+            path, default_path=default_path, environ=environ
+        )
+        values: dict[str, object] = {}
+        if resolved is not None:
+            LOGGER.info("Loading configuration from %s", resolved)
+            values.update(read_toml_config(resolved))
+        values.update(read_env_config(environ))
+        return cls.from_mapping(values)
 
 
 def load_avatar() -> bytes:
@@ -945,22 +1054,18 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
     async def dm_message(self, msg: slixmpp.Message) -> None:
         body = (msg["body"] or "").strip()
-        if (
-            msg["type"] not in ("chat", "normal")
-            or not self.is_command_message(body)
-        ):
+        if msg["type"] not in ("chat", "normal") or not body:
             return
 
-        response = await self.handle_command(body)
+        if self.is_command_message(body):
+            response = await self.handle_command(body)
+        else:
+            response = self.intro_response()
         msg.reply(response).send()
 
     async def handle_command(self, body: str) -> str:
         if body.strip().lower() == COMMAND_PREFIX:
-            return (
-                f"{BOT_NAME} {__version__} - diagnostics and monitoring tools for XMPP. "
-                f'Use "{COMMAND_PREFIX} about" for details or '
-                f'"{COMMAND_PREFIX} help" for commands.'
-            )
+            return XMPPUtilities.intro_response()
 
         command, argument = self.parse_command(body)
         if not command:
@@ -971,6 +1076,14 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             return f'Unknown command. Use "{COMMAND_PREFIX} help" to list all commands.'
 
         return await handler(argument)
+
+    @staticmethod
+    def intro_response() -> str:
+        return (
+            f"{BOT_NAME} {__version__} - diagnostics and monitoring tools for XMPP. "
+            f'Use "{COMMAND_PREFIX} about" for details or '
+            f'"{COMMAND_PREFIX} help" for commands.'
+        )
 
     @staticmethod
     def is_command_message(body: str) -> bool:
@@ -1369,14 +1482,15 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         return items.get("disco_items", [])
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
+    args = parse_args(argv)
 
     try:
-        config = AppConfig.from_env()
-    except ValueError as exc:
+        config = AppConfig.load(args.config)
+    except (OSError, ValueError) as exc:
         LOGGER.error("Invalid configuration: %s", exc)
         raise SystemExit(2) from exc
 

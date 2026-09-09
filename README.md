@@ -44,19 +44,43 @@ the bot's configured validating resolver.
 
 ## Configuration
 
-The bot is configured using environment variables. You can copy `.env.example` to `.env` and fill in your details:
+The bot reads a TOML config file, then overlays any `XMPP_UTILS_*`
+environment variables that are set. Env values win.
+
+Copy the example and edit it:
 
 ```sh
-cp .env.example .env
-# Edit .env with your credentials
+cp config.example.toml xmpp-utilities.toml
+# Edit xmpp-utilities.toml with your credentials
 ```
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `XMPP_UTILS_JID` | The JID of the bot account (e.g., `bot@example.com`). | Yes | - |
-| `XMPP_UTILS_PASSWORD` | The password for the bot account. | Yes | - |
-| `XMPP_UTILS_MUCS` | A comma-separated list of MUC JIDs to join. | No | - |
-| `XMPP_UTILS_NICK` | The nickname to use in MUCs. | No | `XMPP Utilities` |
+```toml
+jid = "xmpp-utilities@telepath.im"
+password = "your-password"
+nick = "XMPP Utilities"
+mucs = [
+  "offtopic@room.telepath.im",
+  "bot-testing@room.telepath.im",
+]
+```
+
+The file is resolved in this order:
+
+1. `--config PATH` / `-c PATH`
+2. `XMPP_UTILS_CONFIG`
+3. `./xmpp-utilities.toml` if that file exists
+4. Environment variables only
+
+`jid` and `password` are required after that merge. Prefer
+`XMPP_UTILS_PASSWORD` over storing a password in the file.
+
+| TOML | Environment | Description | Required | Default |
+|------|-------------|-------------|----------|---------|
+| `jid` | `XMPP_UTILS_JID` | The JID of the bot account (e.g., `bot@example.com`). | Yes | - |
+| `password` | `XMPP_UTILS_PASSWORD` | The password for the bot account. | Yes | - |
+| `mucs` | `XMPP_UTILS_MUCS` | MUC JIDs to join. TOML uses an array; the env var is comma-separated. | No | - |
+| `nick` | `XMPP_UTILS_NICK` | The nickname to use in MUCs. | No | `XMPP Utilities` |
+| — | `XMPP_UTILS_CONFIG` | Path to a TOML config file. | No | `./xmpp-utilities.toml` |
 
 ## Requirements
 
@@ -106,12 +130,25 @@ pip install xmpp_utilities-*.whl
 
 ### Installed package
 
-After installing, set the environment variables and run the bot:
+After installing, create a config file and run the bot:
 
 ```sh
-export XMPP_UTILS_JID="xmpp-utilities@telepath.im"
-export XMPP_UTILS_PASSWORD="your-password"
+cp config.example.toml xmpp-utilities.toml
+# Edit xmpp-utilities.toml
 xmpp-utilities
+```
+
+Or point at a file elsewhere:
+
+```sh
+xmpp-utilities --config /etc/xmpp-utilities.toml
+```
+
+Environment variables still work, including as an overlay for secrets:
+
+```sh
+export XMPP_UTILS_PASSWORD="your-password"
+xmpp-utilities --config /etc/xmpp-utilities.toml
 ```
 
 ### Local development
@@ -129,10 +166,10 @@ Requires [uv](https://github.com/astral-sh/uv).
    uv sync
    ```
 
-3. Set the environment variables and run the bot:
+3. Create a config file and run the bot:
    ```sh
-   export XMPP_UTILS_JID="xmpp-utilities@telepath.im"
-   export XMPP_UTILS_PASSWORD="your-password"
+   cp config.example.toml xmpp-utilities.toml
+   # Edit xmpp-utilities.toml
    uv run xmpp-utilities
    ```
 

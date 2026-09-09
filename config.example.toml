@@ -1,0 +1,11 @@
+# Copy to xmpp-utilities.toml in the working directory, or pass a path with
+# --config. Environment variables override these values when set.
+# Prefer XMPP_UTILS_PASSWORD over storing a password here.
+
+jid = "xmpp-utilities@telepath.im"
+password = "hunter2"
+nick = "XMPP Utilities"
+mucs = [
+  "offtopic@room.telepath.im",
+  "bot-testing@room.telepath.im",
+]

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 from xmpp_utilities.__main__ import (
     BOT_NAME,
@@ -42,6 +43,68 @@ class AboutParsingTests(unittest.TestCase):
             XMPPUtilities.parse_command("!xmpp about"),
             ("about", None),
         )
+
+
+class DirectMessageIntroTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.xmpp = XMPPUtilities("bot@example.org", "password", (), "Bot")
+        self.xmpp.handle_command = AsyncMock(return_value="handled")
+
+    def tearDown(self) -> None:
+        self.xmpp.abort()
+
+    def _message(self, *, body: str, msg_type: str = "chat") -> MagicMock:
+        msg = MagicMock()
+        msg.__getitem__.side_effect = lambda key: {
+            "body": body,
+            "type": msg_type,
+            "mucnick": "someone",
+            "from": MagicMock(bare="room@muc.example.org"),
+        }[key]
+        msg.reply.return_value = MagicMock()
+        return msg
+
+    async def test_non_command_dm_gets_intro(self) -> None:
+        msg = self._message(body="hello")
+
+        await self.xmpp.dm_message(msg)
+
+        msg.reply.assert_called_once_with(XMPPUtilities.intro_response())
+        msg.reply.return_value.send.assert_called_once()
+        self.xmpp.handle_command.assert_not_awaited()
+
+    async def test_command_dm_is_still_handled(self) -> None:
+        msg = self._message(body="!xmpp help")
+
+        await self.xmpp.dm_message(msg)
+
+        self.xmpp.handle_command.assert_awaited_once_with("!xmpp help")
+        msg.reply.assert_called_once_with("handled")
+
+    async def test_empty_dm_is_ignored(self) -> None:
+        msg = self._message(body="   ")
+
+        await self.xmpp.dm_message(msg)
+
+        msg.reply.assert_not_called()
+        self.xmpp.handle_command.assert_not_awaited()
+
+    async def test_groupchat_type_does_not_get_intro(self) -> None:
+        msg = self._message(body="hello", msg_type="groupchat")
+
+        await self.xmpp.dm_message(msg)
+
+        msg.reply.assert_not_called()
+        self.xmpp.handle_command.assert_not_awaited()
+
+    async def test_muc_non_command_is_ignored(self) -> None:
+        msg = self._message(body="hello")
+        self.xmpp.send_message = MagicMock()
+
+        await self.xmpp.muc_message(msg)
+
+        self.xmpp.send_message.assert_not_called()
+        self.xmpp.handle_command.assert_not_awaited()
 
 
 if __name__ == "__main__":

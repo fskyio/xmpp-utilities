@@ -150,6 +150,8 @@ activemq-data/
 # Environments
 .env
 .envrc
+xmpp-utilities.toml
+config.toml
 .venv
 env/
 venv/
