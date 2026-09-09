@@ -18,6 +18,7 @@ import slixmpp
 from slixmpp.exceptions import IqError, IqTimeout
 from slixmpp.plugins.xep_0004.stanza import Form
 from slixmpp.plugins.xep_0054.stanza import VCardTemp
+from slixmpp.plugins.xep_0066.stanza import OOB
 
 from .dane import (
     XMPP_SERVICES,
@@ -47,6 +48,10 @@ XEP_COMMAND_PREFIX = "!xep"
 XEP_XML_URL = "https://xmpp.org/extensions/xep-{number}.xml"
 XEP_PAGE_URL = "https://xmpp.org/extensions/xep-{number}.html"
 ADHOC_COMMANDS_NODE = "http://jabber.org/protocol/commands"
+COMPLIANCE_BADGE_URL = "https://compliance.conversations.im/badge/{domain}/"
+COMPLIANCE_SERVER_URL = "https://compliance.conversations.im/server/{domain}/"
+COMPLIANCE_ADD_URL = "https://compliance.conversations.im/add/"
+NOTE_ONLY_ADHOC_COMMANDS = frozenset({"ping", "uptime"})
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,19 @@ def fetch_xep(number: str) -> XEPInfo:
         return parse_xep_document(response.read(), number)
 
 
+async def load_xep(number: str) -> XEPInfo | str:
+    try:
+        return await asyncio.to_thread(fetch_xep, number)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return f"XEP-{number} was not found."
+        LOGGER.warning("XEP lookup failed for %s: HTTP %s", number, exc.code)
+        return f"Could not retrieve XEP-{number}: HTTP {exc.code}"
+    except (ET.ParseError, ValueError, urllib.error.URLError, TimeoutError) as exc:
+        LOGGER.warning("XEP lookup failed for %s: %s", number, exc)
+        return f"Could not retrieve XEP-{number}. Please try again later."
+
+
 def format_xep_response(xep: XEPInfo) -> str:
     heading = f"XEP-{xep.number}: {xep.title}"
     authors = ", ".join(xep.authors) if xep.authors else "Unknown"
@@ -170,6 +188,30 @@ class AdHocCommand:
     command: str
     instructions: str
     fields: tuple[AdHocField, ...] = ()
+
+
+@dataclass(frozen=True)
+class AdHocPresentation:
+    notes: tuple[tuple[str, str], ...]
+    payload: Form | OOB | list[Form | OOB] | None = None
+
+
+@dataclass(frozen=True)
+class SRVServiceLookup:
+    label: str
+    prefix: str
+    records: tuple[tuple[str, str, str, str], ...] = ()
+    status: str | None = None
+
+
+@dataclass(frozen=True)
+class ComplianceLookup:
+    domain: str
+    score: str | None = None
+    unavailable: bool = False
+    unparsed: bool = False
+    http_error: int | None = None
+    error: str | None = None
 
 
 ADHOC_COMMANDS: tuple[AdHocCommand, ...] = (
@@ -299,6 +341,33 @@ def adhoc_argument(spec: AdHocCommand, values: dict[str, object]) -> str | None:
         return None
     text = str(raw).strip()
     return text or None
+
+
+def contact_field_label(field: str) -> str:
+    return field.replace("-addresses", "").replace("-", " ").title().strip()
+
+
+def adhoc_note_type(message: str) -> str:
+    head = message.lower()
+    if head.startswith(("could not", "ping failed", "error ", "invalid ")):
+        return "error"
+    if "already running" in head:
+        return "warn"
+    return "info"
+
+
+def make_oob(url: str, desc: str) -> OOB:
+    oob = OOB()
+    oob["url"] = url
+    oob["desc"] = desc
+    return oob
+
+
+def apply_adhoc_presentation(session: dict, presentation: AdHocPresentation) -> dict:
+    session["notes"] = list(presentation.notes)
+    session["payload"] = presentation.payload
+    session["next"] = None
+    return session
 
 
 @dataclass(frozen=True)
@@ -477,11 +546,355 @@ class XMPPUtilities(slixmpp.ClientXMPP):
     async def _adhoc_finish(
         self, session: dict, command: str, argument: str | None
     ) -> dict:
+        if command in NOTE_ONLY_ADHOC_COMMANDS:
+            presentation = await self._adhoc_present_note(command, argument)
+        else:
+            presenter = getattr(self, f"_adhoc_present_{command}")
+            presentation = await presenter(argument)
+        return apply_adhoc_presentation(session, presentation)
+
+    def _adhoc_error(self, message: str, note_type: str = "error") -> AdHocPresentation:
+        return AdHocPresentation(notes=((note_type, message),))
+
+    def _result_form(self, title: str, instructions: str = "") -> Form:
+        return self.plugin["xep_0004"].make_form("result", title, instructions)
+
+    def _add_result_fields(
+        self,
+        form: Form,
+        fields: tuple[tuple[str, str, str, object], ...],
+    ) -> None:
+        for var, ftype, label, value in fields:
+            if value is None or value == "" or value == []:
+                continue
+            form.add_field(var=var, ftype=ftype, label=label, value=value)
+
+    def _result_table(
+        self,
+        title: str,
+        columns: tuple[tuple[str, str, str], ...],
+        rows: list[dict[str, str]],
+        instructions: str = "",
+    ) -> Form:
+        form = self._result_form(title, instructions)
+        for var, ftype, label in columns:
+            form.add_reported(var, ftype=ftype, label=label)
+        for row in rows:
+            form.add_item(row)
+        return form
+
+    def _with_oob(
+        self, form: Form, url: str, desc: str
+    ) -> list[Form | OOB]:
+        return [form, make_oob(url, desc)]
+
+    async def _adhoc_present_note(
+        self, command: str, argument: str | None
+    ) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A JID is required.")
         result = await self.commands[command](argument)
-        session["notes"] = [("info", result)]
-        session["payload"] = None
-        session["next"] = None
-        return session
+        return AdHocPresentation(notes=((adhoc_note_type(result), result),))
+
+    async def _adhoc_present_about(self, _argument: str | None) -> AdHocPresentation:
+        form = self._result_form(BOT_NAME, BOT_DESCRIPTION)
+        self._add_result_fields(
+            form,
+            (
+                ("name", "text-single", "Name", BOT_NAME),
+                ("version", "text-single", "Version", __version__),
+                ("homepage", "text-single", "Homepage", __homepage__),
+                ("repository", "text-single", "Repository", __repository__),
+                ("issues", "text-single", "Issues", __issues__),
+                ("license", "text-single", "License", __license__),
+            ),
+        )
+        return AdHocPresentation(
+            notes=(("info", f"{BOT_NAME} {__version__}"),),
+            payload=self._with_oob(form, __homepage__, BOT_NAME),
+        )
+
+    async def _adhoc_present_version(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A JID is required.")
+        result = await self._query_version(argument)
+        if isinstance(result, str):
+            return self._adhoc_error(result)
+        name, version, os_name = result
+        form = self._result_form("Software Version", argument)
+        self._add_result_fields(
+            form,
+            (
+                ("jid", "jid-single", "JID", argument),
+                ("name", "text-single", "Name", name),
+                ("version", "text-single", "Version", version),
+                ("os", "text-single", "Operating system", os_name),
+            ),
+        )
+        if os_name:
+            note = f"{argument} is running {name} {version} on {os_name}."
+        else:
+            note = f"{argument} is running {name} {version}."
+        return AdHocPresentation(notes=(("info", note),), payload=form)
+
+    async def _adhoc_present_items(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A JID is required.")
+        try:
+            items = await self.get_service_items(argument)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Items lookup failed for %s: %s", argument, exc)
+            return self._adhoc_error(f"Could not retrieve items for {argument}: {exc}")
+        rows = []
+        for item in items:
+            rows.append(
+                {
+                    "jid": str(item.get("jid") or "unknown"),
+                    "name": item.get("name") or "",
+                }
+            )
+        if not rows:
+            return self._adhoc_error(
+                f"No items found for service {argument}.", note_type="warn"
+            )
+        form = self._result_table(
+            "Service Items",
+            (
+                ("jid", "jid-single", "JID"),
+                ("name", "text-single", "Name"),
+            ),
+            rows,
+            instructions=argument,
+        )
+        noun = "item" if len(rows) == 1 else "items"
+        return AdHocPresentation(
+            notes=(("info", f"Found {len(rows)} {noun} for {argument}."),),
+            payload=form,
+        )
+
+    async def _adhoc_present_contact(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A JID is required.")
+        result = await self._query_contact(argument)
+        if isinstance(result, str):
+            return self._adhoc_error(result)
+        if not result:
+            return self._adhoc_error(
+                f"No contact information found for service {argument}.",
+                note_type="warn",
+            )
+        form = self._result_form("Contact Information", argument)
+        fields = []
+        for field, values in sorted(result.items()):
+            if not values:
+                continue
+            ftype = "text-multi" if len(values) > 1 else "text-single"
+            value: object = values if len(values) > 1 else values[0]
+            fields.append((field, ftype, contact_field_label(field), value))
+        self._add_result_fields(form, tuple(fields))
+        return AdHocPresentation(
+            notes=(("info", f"Contact information for {argument}."),),
+            payload=form,
+        )
+
+    async def _adhoc_present_info(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A JID is required.")
+        result = await self._query_info(argument)
+        if isinstance(result, str):
+            return self._adhoc_error(result)
+        identities, features = result
+        if not identities and not features:
+            return self._adhoc_error(
+                f"No identities or features found for {argument}.", note_type="warn"
+            )
+        form = self._result_form("Entity Info", argument)
+        if identities:
+            form.add_reported("category", ftype="text-single", label="Category")
+            form.add_reported("type", ftype="text-single", label="Type")
+            form.add_reported("name", ftype="text-single", label="Name")
+            for category, itype, _lang, name in sorted(identities):
+                form.add_item(
+                    {
+                        "category": category,
+                        "type": itype,
+                        "name": name or "",
+                    }
+                )
+        if features:
+            form.add_field(
+                var="features",
+                ftype="list-multi",
+                label="Features",
+                value=sorted(features),
+            )
+        return AdHocPresentation(
+            notes=(("info", f"Disco info for {argument}."),),
+            payload=form,
+        )
+
+    async def _adhoc_present_srv(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A domain is required.")
+        domain = argument.strip()
+        lookups = await self._query_srv(domain)
+        rows: list[dict[str, str]] = []
+        for lookup in lookups:
+            if lookup.status:
+                rows.append(
+                    {
+                        "service": lookup.label,
+                        "prefix": lookup.prefix,
+                        "priority": "",
+                        "weight": "",
+                        "port": "",
+                        "target": lookup.status,
+                    }
+                )
+                continue
+            for priority, weight, port, target in lookup.records:
+                rows.append(
+                    {
+                        "service": lookup.label,
+                        "prefix": lookup.prefix,
+                        "priority": priority,
+                        "weight": weight,
+                        "port": port,
+                        "target": target,
+                    }
+                )
+        form = self._result_table(
+            "SRV Lookup",
+            (
+                ("service", "text-single", "Service"),
+                ("prefix", "text-single", "Name"),
+                ("priority", "text-single", "Priority"),
+                ("weight", "text-single", "Weight"),
+                ("port", "text-single", "Port"),
+                ("target", "text-single", "Target"),
+            ),
+            rows,
+            instructions=domain,
+        )
+        return AdHocPresentation(
+            notes=(("info", f"SRV records for {domain}."),),
+            payload=form,
+        )
+
+    async def _adhoc_present_tlsa(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A domain is required.")
+        parsed = parse_dane_argument(argument)
+        if parsed is None:
+            return self._adhoc_error("Invalid TLSA lookup arguments.")
+        domain, should_validate = parsed
+        result = await self.cmd_tlsa(argument)
+        if result.startswith("A DANE validation"):
+            return self._adhoc_error(result, note_type="warn")
+        form = self._result_form("DANE TLSA", domain)
+        self._add_result_fields(
+            form,
+            (
+                ("domain", "text-single", "Domain", domain),
+                (
+                    "validate",
+                    "boolean",
+                    "Certificates validated",
+                    should_validate,
+                ),
+                ("report", "text-multi", "Report", result),
+            ),
+        )
+        note = f"TLSA records for {domain}."
+        if not should_validate:
+            note = f"TLSA records for {domain} (without certificate validation)."
+        return AdHocPresentation(notes=(("info", note),), payload=form)
+
+    async def _adhoc_present_compliance(
+        self, argument: str | None
+    ) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A domain is required.")
+        lookup = await self._query_compliance(argument.strip())
+        if lookup.http_error is not None:
+            return self._adhoc_error(
+                f"Error fetching compliance score for {lookup.domain}: "
+                f"HTTP {lookup.http_error}"
+            )
+        if lookup.error:
+            return self._adhoc_error(
+                f"Error fetching compliance score for {lookup.domain}: {lookup.error}"
+            )
+        if lookup.unparsed:
+            return self._adhoc_error(
+                f"Could not parse compliance badge for {lookup.domain}."
+            )
+        details = COMPLIANCE_SERVER_URL.format(domain=lookup.domain)
+        if lookup.unavailable:
+            form = self._result_form("Compliance Score", lookup.domain)
+            self._add_result_fields(
+                form,
+                (
+                    ("domain", "text-single", "Domain", lookup.domain),
+                    ("score", "text-single", "Score", "Unavailable"),
+                    ("add", "text-single", "Register", COMPLIANCE_ADD_URL),
+                ),
+            )
+            return AdHocPresentation(
+                notes=(
+                    (
+                        "warn",
+                        f"Compliance score for {lookup.domain} is unavailable.",
+                    ),
+                ),
+                payload=self._with_oob(
+                    form, COMPLIANCE_ADD_URL, "Add this server"
+                ),
+            )
+        form = self._result_form("Compliance Score", lookup.domain)
+        self._add_result_fields(
+            form,
+            (
+                ("domain", "text-single", "Domain", lookup.domain),
+                ("score", "text-single", "Score", lookup.score),
+                ("details", "text-single", "Details", details),
+            ),
+        )
+        return AdHocPresentation(
+            notes=(
+                ("info", f"Compliance score for {lookup.domain}: {lookup.score}"),
+            ),
+            payload=self._with_oob(form, details, f"{lookup.domain} compliance"),
+        )
+
+    async def _adhoc_present_xep(self, argument: str | None) -> AdHocPresentation:
+        if not argument:
+            return self._adhoc_error("A XEP number is required.")
+        number = normalize_xep_number(argument)
+        if number is None:
+            return self._adhoc_error(f'Invalid XEP number: "{argument}".')
+        result = await load_xep(number)
+        if isinstance(result, str):
+            note_type = "warn" if "was not found" in result else "error"
+            return self._adhoc_error(result, note_type=note_type)
+        authors = ", ".join(result.authors) if result.authors else "Unknown"
+        form = self._result_form(f"XEP-{result.number}: {result.title}")
+        self._add_result_fields(
+            form,
+            (
+                ("number", "text-single", "Number", f"XEP-{result.number}"),
+                ("title", "text-single", "Title", result.title),
+                ("abstract", "text-multi", "Abstract", result.abstract),
+                ("authors", "text-single", "Authors", authors),
+                ("status", "text-single", "Status", result.status),
+                ("type", "text-single", "Type", result.type),
+                ("url", "text-single", "URL", result.page_url),
+            ),
+        )
+        return AdHocPresentation(
+            notes=(("info", f"XEP-{result.number}: {result.title}"),),
+            payload=self._with_oob(form, result.page_url, f"XEP-{result.number}"),
+        )
 
     def build_vcard(self, avatar: bytes) -> VCardTemp:
         vcard = self.plugin["xep_0054"].make_vcard()
@@ -626,17 +1039,9 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                 f"Try {COMMAND_PREFIX} xep 516 or {COMMAND_PREFIX} xep XEP-0516."
             )
 
-        try:
-            xep = await asyncio.to_thread(fetch_xep, number)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return f"XEP-{number} was not found."
-            LOGGER.warning("XEP lookup failed for %s: HTTP %s", number, exc.code)
-            return f"Could not retrieve XEP-{number}: HTTP {exc.code}"
-        except (ET.ParseError, ValueError, urllib.error.URLError, TimeoutError) as exc:
-            LOGGER.warning("XEP lookup failed for %s: %s", number, exc)
-            return f"Could not retrieve XEP-{number}. Please try again later."
-
+        xep = await load_xep(number)
+        if isinstance(xep, str):
+            return xep
         return format_xep_response(xep)
 
     async def cmd_version(self, argument: str | None) -> str:
@@ -646,17 +1051,10 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                 f"Usage: {COMMAND_PREFIX} version <jid>"
             )
 
-        try:
-            iq = await self.plugin["xep_0092"].get_version(argument)
-        except (IqError, IqTimeout) as exc:
-            LOGGER.warning("Version lookup failed for %s: %s", argument, exc)
-            return f"Could not retrieve version for {argument}: {exc}"
-
-        software_version = iq["software_version"]
-        name = software_version["name"] or "unknown"
-        version = software_version["version"] or "unknown"
-        os_name = software_version["os"]
-
+        result = await self._query_version(argument)
+        if isinstance(result, str):
+            return result
+        name, version, os_name = result
         if os_name:
             return f"{argument} is running {name} {version} on {os_name}."
         return f"{argument} is running {name} {version}."
@@ -691,24 +1089,9 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                 f"Usage: {COMMAND_PREFIX} contact <jid>"
             )
 
-        try:
-            iq = await self.plugin["xep_0030"].get_info(jid=argument)
-        except (IqError, IqTimeout) as exc:
-            LOGGER.warning("Contact lookup failed for %s: %s", argument, exc)
-            return f"Could not retrieve contact information for {argument}: {exc}"
-
-        contact_info: dict[str, list[str]] = {}
-        info = iq["disco_info"]
-
-        for sub in info["substanzas"]:
-            if isinstance(sub, Form) and sub["type"] == "result":
-                values = sub["values"]
-                for field, val in values.items():
-                    if field in self.CONTACT_FIELDS:
-                        if isinstance(val, list):
-                            contact_info[field] = val
-                        elif isinstance(val, str) and val.strip():
-                            contact_info[field] = [val]
+        contact_info = await self._query_contact(argument)
+        if isinstance(contact_info, str):
+            return contact_info
 
         if not contact_info:
             return f"No contact information found for service {argument}."
@@ -717,10 +1100,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         for field, values in sorted(contact_info.items()):
             if not values:
                 continue
-            field_name = (
-                field.replace("-addresses", "").replace("-", " ").title().strip()
-            )
-            lines.append(f"\n{field_name}:")
+            lines.append(f"\n{contact_field_label(field)}:")
             lines.extend([f"  - {value}" for value in values])
         return "\n".join(lines)
 
@@ -731,25 +1111,21 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                 f"Usage: {COMMAND_PREFIX} info <jid>"
             )
 
-        try:
-            iq = await self.plugin["xep_0030"].get_info(jid=argument)
-        except (IqError, IqTimeout) as exc:
-            LOGGER.warning("Info lookup failed for %s: %s", argument, exc)
-            return f"Could not retrieve info for {argument}: {exc}"
+        result = await self._query_info(argument)
+        if isinstance(result, str):
+            return result
+        identities, features = result
 
-        info = iq["disco_info"]
         lines = [f"Info for {argument}:"]
 
-        identities = list(info["identities"])
         if identities:
             lines.append("\nIdentities:")
-            for category, itype, lang, name in sorted(identities):
+            for category, itype, _lang, name in sorted(identities):
                 identity_str = f"  - {category}/{itype}"
                 if name:
                     identity_str += f" ({name})"
                 lines.append(identity_str)
 
-        features = sorted(info["features"])
         if features:
             lines.append("\nFeatures:")
             for feature in features:
@@ -812,25 +1188,13 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         domain = argument.strip()
         lines = [f"SRV records for {domain}:"]
 
-        for service in XMPP_SERVICES:
-            label = service.label
-            prefix = service.prefix
-            name = f"{prefix}.{domain}"
-            lines.append(f"\n{label} ({prefix}):")
-            try:
-                answers = await self._resolver.resolve(name, "SRV")
-                records = []
-                for rdata in answers:
-                    records.append(
-                        f"{rdata.priority} {rdata.weight} {rdata.port} {rdata.target}"
-                    )
-                for r in sorted(records):
-                    lines.append(f"  - {r}")
-            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-                lines.append("  - No records found")
-            except dns.exception.DNSException as e:
-                LOGGER.warning("DNS lookup failed for %s: %s", name, e)
-                lines.append(f"  - Lookup failed: {e}")
+        for lookup in await self._query_srv(domain):
+            lines.append(f"\n{lookup.label} ({lookup.prefix}):")
+            if lookup.status:
+                lines.append(f"  - {lookup.status}")
+                continue
+            for priority, weight, port, target in lookup.records:
+                lines.append(f"  - {priority} {weight} {port} {target}")
 
         return "\n".join(lines)
 
@@ -868,8 +1232,113 @@ class XMPPUtilities(slixmpp.ClientXMPP):
                 f"Usage: {COMMAND_PREFIX} compliance <domain>"
             )
 
-        domain = argument.strip()
-        url = f"https://compliance.conversations.im/badge/{domain}/"
+        lookup = await self._query_compliance(argument.strip())
+        if lookup.http_error is not None:
+            return (
+                f"Error fetching compliance score for {lookup.domain}: "
+                f"HTTP {lookup.http_error}"
+            )
+        if lookup.error:
+            return f"Error fetching compliance score for {lookup.domain}: {lookup.error}"
+        if lookup.unparsed:
+            return f"Could not parse compliance badge for {lookup.domain}."
+        if lookup.unavailable:
+            return (
+                f"Compliance score for {lookup.domain} is unavailable. "
+                f"It may not be registered on compliance.conversations.im.\n"
+                f"You can add it here: {COMPLIANCE_ADD_URL}"
+            )
+        return (
+            f"Compliance score for {lookup.domain}: {lookup.score}\n"
+            f"More details: {COMPLIANCE_SERVER_URL.format(domain=lookup.domain)}"
+        )
+
+    async def _query_version(
+        self, jid: str
+    ) -> tuple[str, str, str | None] | str:
+        try:
+            iq = await self.plugin["xep_0092"].get_version(jid)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Version lookup failed for %s: %s", jid, exc)
+            return f"Could not retrieve version for {jid}: {exc}"
+
+        software_version = iq["software_version"]
+        os_name = software_version["os"] or None
+        return (
+            software_version["name"] or "unknown",
+            software_version["version"] or "unknown",
+            os_name,
+        )
+
+    async def _query_contact(self, jid: str) -> dict[str, list[str]] | str:
+        try:
+            iq = await self.plugin["xep_0030"].get_info(jid=jid)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Contact lookup failed for %s: %s", jid, exc)
+            return f"Could not retrieve contact information for {jid}: {exc}"
+
+        contact_info: dict[str, list[str]] = {}
+        info = iq["disco_info"]
+        for sub in info["substanzas"]:
+            if isinstance(sub, Form) and sub["type"] == "result":
+                values = sub["values"]
+                for field, val in values.items():
+                    if field in self.CONTACT_FIELDS:
+                        if isinstance(val, list):
+                            contact_info[field] = val
+                        elif isinstance(val, str) and val.strip():
+                            contact_info[field] = [val]
+        return contact_info
+
+    async def _query_info(
+        self, jid: str
+    ) -> tuple[list[tuple[str, str, str, str]], list[str]] | str:
+        try:
+            iq = await self.plugin["xep_0030"].get_info(jid=jid)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Info lookup failed for %s: %s", jid, exc)
+            return f"Could not retrieve info for {jid}: {exc}"
+
+        info = iq["disco_info"]
+        return list(info["identities"]), sorted(info["features"])
+
+    async def _query_srv(self, domain: str) -> list[SRVServiceLookup]:
+        lookups: list[SRVServiceLookup] = []
+        for service in XMPP_SERVICES:
+            name = f"{service.prefix}.{domain}"
+            try:
+                answers = await self._resolver.resolve(name, "SRV")
+                records = []
+                for rdata in answers:
+                    records.append(
+                        f"{rdata.priority} {rdata.weight} {rdata.port} {rdata.target}"
+                    )
+                parsed: list[tuple[str, str, str, str]] = []
+                for row in sorted(records):
+                    priority, weight, port, target = row.split(None, 3)
+                    parsed.append((priority, weight, port, target))
+                lookups.append(
+                    SRVServiceLookup(service.label, service.prefix, tuple(parsed))
+                )
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                lookups.append(
+                    SRVServiceLookup(
+                        service.label, service.prefix, status="No records found"
+                    )
+                )
+            except dns.exception.DNSException as exc:
+                LOGGER.warning("DNS lookup failed for %s: %s", name, exc)
+                lookups.append(
+                    SRVServiceLookup(
+                        service.label,
+                        service.prefix,
+                        status=f"Lookup failed: {exc}",
+                    )
+                )
+        return lookups
+
+    async def _query_compliance(self, domain: str) -> ComplianceLookup:
+        url = COMPLIANCE_BADGE_URL.format(domain=domain)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
         def fetch() -> str:
@@ -878,27 +1347,21 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
         try:
             svg = await asyncio.to_thread(fetch)
-            match = re.search(
-                r'<text x="2255" y="140"[^>]*>\s*(.+?)\s*</text>', svg, re.DOTALL
-            )
-            if match:
-                score = match.group(1).strip()
-                if score == "Unavailable":
-                    return (
-                        f"Compliance score for {domain} is unavailable. "
-                        f"It may not be registered on compliance.conversations.im.\n"
-                        f"You can add it here: https://compliance.conversations.im/add/"
-                    )
-                return (
-                    f"Compliance score for {domain}: {score}\n"
-                    f"More details: https://compliance.conversations.im/server/{domain}/"
-                )
-            return f"Could not parse compliance badge for {domain}."
-        except urllib.error.HTTPError as e:
-            return f"Error fetching compliance score for {domain}: HTTP {e.code}"
-        except (urllib.error.URLError, TimeoutError, UnicodeError) as e:
-            LOGGER.warning("Compliance lookup failed for %s: %s", domain, e)
-            return f"Error fetching compliance score for {domain}: {e}"
+        except urllib.error.HTTPError as exc:
+            return ComplianceLookup(domain=domain, http_error=exc.code)
+        except (urllib.error.URLError, TimeoutError, UnicodeError) as exc:
+            LOGGER.warning("Compliance lookup failed for %s: %s", domain, exc)
+            return ComplianceLookup(domain=domain, error=str(exc))
+
+        match = re.search(
+            r'<text x="2255" y="140"[^>]*>\s*(.+?)\s*</text>', svg, re.DOTALL
+        )
+        if not match:
+            return ComplianceLookup(domain=domain, unparsed=True)
+        score = match.group(1).strip()
+        if score == "Unavailable":
+            return ComplianceLookup(domain=domain, unavailable=True)
+        return ComplianceLookup(domain=domain, score=score)
 
     async def get_service_items(self, service: str) -> list[dict]:
         disco = self.plugin["xep_0030"]
