@@ -208,8 +208,21 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.register_plugin("xep_0012")
         self.register_plugin("xep_0030")
         self.register_plugin("xep_0045")
-        self.register_plugin("xep_0092")
+        self.register_plugin(
+            "xep_0092",
+            pconfig={
+                "software_name": BOT_NAME,
+                "version": __version__,
+            },
+        )
+        self.register_plugin("xep_0115")
         self.register_plugin("xep_0199")
+
+        self.plugin["xep_0030"].add_identity(
+            category="client",
+            itype="bot",
+            name=BOT_NAME,
+        )
 
         self.commands: dict[str, Callable[[str | None], Awaitable[str]]] = {
             "help": self.cmd_help,
@@ -240,6 +253,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.connect()
 
     async def start(self, _event: object) -> None:
+        await self.plugin["xep_0115"].update_caps()
         self.send_presence()
         await self.get_roster()
         for muc_jid in self.muc_jids:
