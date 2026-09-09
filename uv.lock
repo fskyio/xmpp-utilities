@@ -231,7 +231,7 @@ wheels = [
 [[package]]
 name = "xmpp-utilities"
 version = "1.2.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "dnspython", extra = ["dnssec"] },
     { name = "slixmpp" },

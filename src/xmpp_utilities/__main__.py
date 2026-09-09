@@ -7,6 +7,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 import dns.asyncresolver
@@ -16,6 +17,7 @@ import dns.resolver
 import slixmpp
 from slixmpp.exceptions import IqError, IqTimeout
 from slixmpp.plugins.xep_0004.stanza import Form
+from slixmpp.plugins.xep_0054.stanza import VCardTemp
 
 from .dane import (
     XMPP_SERVICES,
@@ -33,6 +35,11 @@ __license__ = "0BSD"
 
 BOT_NAME = "XMPP Utilities"
 BOT_DESCRIPTION = "An XMPP bot with diagnostics and monitoring tools."
+BOT_ORG = "FSKY"
+AVATAR_RESOURCE = "avatar.png"
+AVATAR_TYPE = "image/png"
+AVATAR_WIDTH = 128
+AVATAR_HEIGHT = 128
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_PREFIX = "!xmpp"
@@ -177,6 +184,20 @@ class AppConfig:
         return cls(jid=jid, password=password, muc_jids=tuple(muc_jids), nick=nick)
 
 
+def load_avatar() -> bytes:
+    return Path(__file__).with_name(AVATAR_RESOURCE).read_bytes()
+
+
+def avatar_metadata_item(avatar: bytes, avatar_id: str) -> dict[str, str]:
+    return {
+        "id": avatar_id,
+        "type": AVATAR_TYPE,
+        "bytes": str(len(avatar)),
+        "width": str(AVATAR_WIDTH),
+        "height": str(AVATAR_HEIGHT),
+    }
+
+
 class XMPPUtilities(slixmpp.ClientXMPP):
     CONTACT_FIELDS: ClassVar[set[str]] = {
         "abuse-addresses",
@@ -208,6 +229,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.register_plugin("xep_0012")
         self.register_plugin("xep_0030")
         self.register_plugin("xep_0045")
+        self.register_plugin("xep_0054")
+        self.register_plugin("xep_0084")
         self.register_plugin(
             "xep_0092",
             pconfig={
@@ -216,6 +239,9 @@ class XMPPUtilities(slixmpp.ClientXMPP):
             },
         )
         self.register_plugin("xep_0115")
+        self.register_plugin("xep_0153")
+        self.register_plugin("xep_0163")
+        self.register_plugin("xep_0172")
         self.register_plugin("xep_0199")
 
         self.plugin["xep_0030"].add_identity(
@@ -253,12 +279,48 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.connect()
 
     async def start(self, _event: object) -> None:
+        await self.advertise_profile()
         await self.plugin["xep_0115"].update_caps()
-        self.send_presence()
+        self.send_presence(pnick=self.nick)
         await self.get_roster()
         for muc_jid in self.muc_jids:
             LOGGER.info("Joining MUC: %s", muc_jid)
             self.plugin["xep_0045"].join_muc(muc_jid, self.nick)
+
+    def build_vcard(self, avatar: bytes) -> VCardTemp:
+        vcard = self.plugin["xep_0054"].make_vcard()
+        vcard["FN"] = self.nick
+        vcard["NICKNAME"] = self.nick
+        vcard["DESC"] = BOT_DESCRIPTION
+        vcard["URL"] = __homepage__
+        vcard["JABBERID"] = str(self.boundjid.bare)
+        vcard["ORG"]["ORGNAME"] = BOT_ORG
+        vcard["PHOTO"]["TYPE"] = AVATAR_TYPE
+        vcard["PHOTO"]["BINVAL"] = avatar
+        return vcard
+
+    async def advertise_profile(self) -> None:
+        avatar = load_avatar()
+        avatar_id = self.plugin["xep_0084"].generate_id(avatar)
+
+        try:
+            await self.plugin["xep_0054"].publish_vcard(self.build_vcard(avatar))
+            await self.plugin["xep_0153"].api["set_hash"](self.boundjid, args=avatar_id)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Could not publish vCard: %s", exc)
+
+        try:
+            await self.plugin["xep_0172"].publish_nick(nick=self.nick)
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Could not publish nickname: %s", exc)
+
+        try:
+            await self.plugin["xep_0084"].publish_avatar(avatar)
+            await self.plugin["xep_0084"].publish_avatar_metadata(
+                items=avatar_metadata_item(avatar, avatar_id)
+            )
+        except (IqError, IqTimeout) as exc:
+            LOGGER.warning("Could not publish avatar: %s", exc)
 
     async def muc_message(self, msg: slixmpp.Message) -> None:
         body = (msg["body"] or "").strip()
