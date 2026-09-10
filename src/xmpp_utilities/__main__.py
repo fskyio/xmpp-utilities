@@ -29,6 +29,7 @@ from .dane import (
     parse_dane_argument,
     validate_dane,
 )
+from .muc import InviteConfig, MucManager, parse_bool, parse_jid_csv, parse_jid_list, parse_max_rooms
 
 __version__ = "1.2.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
@@ -420,6 +421,31 @@ def _parse_mucs_toml(value: object) -> tuple[str, ...]:
     return tuple(item.strip() for item in value if item.strip())
 
 
+def _parse_invite_table(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("invite must be a table")
+    invite: dict[str, object] = {}
+    if "enabled" in value:
+        invite["enabled"] = parse_bool(value["enabled"], "invite.enabled")
+    if "persist" in value:
+        invite["persist"] = parse_bool(value["persist"], "invite.persist")
+    if "max_rooms" in value:
+        invite["max_rooms"] = parse_max_rooms(value["max_rooms"], "invite.max_rooms")
+    if "allow_from" in value:
+        invite["allow_from"] = parse_jid_list(value["allow_from"], "invite.allow_from")
+    if "allow_domains" in value:
+        invite["allow_domains"] = parse_jid_list(
+            value["allow_domains"], "invite.allow_domains"
+        )
+    if "deny_from" in value:
+        invite["deny_from"] = parse_jid_list(value["deny_from"], "invite.deny_from")
+    if "allow_muc_hosts" in value:
+        invite["allow_muc_hosts"] = parse_jid_list(
+            value["allow_muc_hosts"], "invite.allow_muc_hosts"
+        )
+    return invite
+
+
 def read_toml_config(path: Path) -> dict[str, object]:
     if not path.is_file():
         raise ValueError(f"Config file not found: {path}")
@@ -442,6 +468,8 @@ def read_toml_config(path: Path) -> dict[str, object]:
         values["nick"] = _require_string(data["nick"], "nick").strip()
     if "mucs" in data:
         values["muc_jids"] = _parse_mucs_toml(data["mucs"])
+    if "invite" in data:
+        values["invite"] = _parse_invite_table(data["invite"])
     return values
 
 
@@ -456,6 +484,49 @@ def read_env_config(environ: Mapping[str, str] | None = None) -> dict[str, objec
         values["nick"] = env["XMPP_UTILS_NICK"].strip()
     if "XMPP_UTILS_MUCS" in env:
         values["muc_jids"] = _parse_mucs_csv(env["XMPP_UTILS_MUCS"])
+    invite: dict[str, object] = {}
+    if "XMPP_UTILS_INVITE_ENABLED" in env:
+        invite["enabled"] = parse_bool(
+            env["XMPP_UTILS_INVITE_ENABLED"], "invite.enabled"
+        )
+    if "XMPP_UTILS_INVITE_PERSIST" in env:
+        invite["persist"] = parse_bool(
+            env["XMPP_UTILS_INVITE_PERSIST"], "invite.persist"
+        )
+    if "XMPP_UTILS_INVITE_MAX_ROOMS" in env:
+        raw_max = env["XMPP_UTILS_INVITE_MAX_ROOMS"].strip()
+        if raw_max:
+            try:
+                invite["max_rooms"] = parse_max_rooms(
+                    int(raw_max), "invite.max_rooms"
+                )
+            except ValueError as exc:
+                raise ValueError("invite.max_rooms must be a positive integer") from exc
+    if "XMPP_UTILS_INVITE_ALLOW_FROM" in env:
+        invite["allow_from"] = parse_jid_csv(env["XMPP_UTILS_INVITE_ALLOW_FROM"])
+    if "XMPP_UTILS_INVITE_ALLOW_DOMAINS" in env:
+        invite["allow_domains"] = parse_jid_csv(env["XMPP_UTILS_INVITE_ALLOW_DOMAINS"])
+    if "XMPP_UTILS_INVITE_DENY_FROM" in env:
+        invite["deny_from"] = parse_jid_csv(env["XMPP_UTILS_INVITE_DENY_FROM"])
+    if "XMPP_UTILS_INVITE_ALLOW_MUC_HOSTS" in env:
+        invite["allow_muc_hosts"] = parse_jid_csv(
+            env["XMPP_UTILS_INVITE_ALLOW_MUC_HOSTS"]
+        )
+    if invite:
+        values["invite"] = invite
+    return values
+
+
+def _merge_config_values(
+    file_values: Mapping[str, object], env_values: Mapping[str, object]
+) -> dict[str, object]:
+    values = dict(file_values)
+    invite = dict(values.pop("invite", {}) or {})
+    env_invite = dict(env_values.get("invite", {}) or {})
+    invite.update(env_invite)
+    values.update({key: value for key, value in env_values.items() if key != "invite"})
+    if invite:
+        values["invite"] = invite
     return values
 
 
@@ -465,6 +536,7 @@ class AppConfig:
     password: str
     muc_jids: tuple[str, ...]
     nick: str
+    invite: InviteConfig = InviteConfig()
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> "AppConfig":
@@ -485,11 +557,22 @@ class AppConfig:
         if missing:
             raise ValueError("Missing required configuration: " + ", ".join(missing))
 
+        invite_values = values.get("invite", {})
+        if invite_values in (None, {}):
+            invite = InviteConfig()
+        elif isinstance(invite_values, InviteConfig):
+            invite = invite_values
+        elif isinstance(invite_values, Mapping):
+            invite = InviteConfig.from_mapping(invite_values)
+        else:
+            raise ValueError("invite must be a table")
+
         return cls(
             jid=jid,
             password=password,
             muc_jids=muc_jids,
             nick=nick or DEFAULT_NICK,
+            invite=invite,
         )
 
     @classmethod
@@ -503,12 +586,11 @@ class AppConfig:
         resolved = resolve_config_path(
             path, default_path=default_path, environ=environ
         )
-        values: dict[str, object] = {}
+        file_values: dict[str, object] = {}
         if resolved is not None:
             LOGGER.info("Loading configuration from %s", resolved)
-            values.update(read_toml_config(resolved))
-        values.update(read_env_config(environ))
-        return cls.from_mapping(values)
+            file_values = read_toml_config(resolved)
+        return cls.from_mapping(_merge_config_values(file_values, read_env_config(environ)))
 
 
 def load_avatar() -> bytes:
@@ -537,11 +619,17 @@ class XMPPUtilities(slixmpp.ClientXMPP):
     }
 
     def __init__(
-        self, jid: str, password: str, muc_jids: tuple[str, ...], nick: str
+        self,
+        jid: str,
+        password: str,
+        muc_jids: tuple[str, ...],
+        nick: str,
+        invite: InviteConfig | None = None,
     ) -> None:
         super().__init__(jid, password)
         self.muc_jids = muc_jids
         self.nick = nick
+        self.invite = invite or InviteConfig()
         self._shutdown_requested = False
         self._resolver = dns.asyncresolver.Resolver()
         self._resolver.flags = dns.flags.RD | dns.flags.AD
@@ -558,6 +646,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.register_plugin("xep_0045")
         self.register_plugin("xep_0050")
         self.register_plugin("xep_0054")
+        self.register_plugin("xep_0060")
         self.register_plugin("xep_0084")
         self.register_plugin(
             "xep_0092",
@@ -571,12 +660,17 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         self.register_plugin("xep_0163")
         self.register_plugin("xep_0172")
         self.register_plugin("xep_0199")
+        self.register_plugin("xep_0223")
+        self.register_plugin("xep_0249")
+        self.register_plugin("xep_0402")
+        self.register_plugin("xep_0410")
 
         self.plugin["xep_0030"].add_identity(
             category="client",
             itype="bot",
             name=BOT_NAME,
         )
+        self.mucs = MucManager(self, muc_jids, nick, self.invite)
 
         self.commands: dict[str, Callable[[str | None], Awaitable[str]]] = {
             "help": self.cmd_help,
@@ -596,6 +690,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
 
     def request_shutdown(self) -> None:
         self._shutdown_requested = True
+        self.mucs.shutdown()
 
     def on_disconnected(self, reason: object) -> None:
         if self._shutdown_requested:
@@ -612,9 +707,7 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         await self.plugin["xep_0115"].update_caps()
         self.send_presence(pnick=self.nick)
         await self.get_roster()
-        for muc_jid in self.muc_jids:
-            LOGGER.info("Joining MUC: %s", muc_jid)
-            self.plugin["xep_0045"].join_muc(muc_jid, self.nick)
+        await self.mucs.start()
 
     def register_adhoc_commands(self) -> None:
         adhoc = self.plugin["xep_0050"]
@@ -1053,6 +1146,8 @@ class XMPPUtilities(slixmpp.ClientXMPP):
         )
 
     async def dm_message(self, msg: slixmpp.Message) -> None:
+        if self.mucs.is_invite_message(msg):
+            return
         body = (msg["body"] or "").strip()
         if msg["type"] not in ("chat", "normal") or not body:
             return
@@ -1497,7 +1592,9 @@ def main(argv: list[str] | None = None) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    xmpp = XMPPUtilities(config.jid, config.password, config.muc_jids, config.nick)
+    xmpp = XMPPUtilities(
+        config.jid, config.password, config.muc_jids, config.nick, config.invite
+    )
     connect_result = loop.run_until_complete(xmpp.connect())
     if connect_result is False:
         LOGGER.warning(

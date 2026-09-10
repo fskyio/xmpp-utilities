@@ -45,6 +45,16 @@ class ClientIdentityTests(unittest.IsolatedAsyncioTestCase):
         for plugin in ("xep_0054", "xep_0084", "xep_0153", "xep_0163", "xep_0172"):
             self.assertIn(plugin, self.xmpp.plugin)
 
+    def test_registers_muc_invite_plugins(self) -> None:
+        for plugin in (
+            "xep_0060",
+            "xep_0223",
+            "xep_0249",
+            "xep_0402",
+            "xep_0410",
+        ):
+            self.assertIn(plugin, self.xmpp.plugin)
+
     def test_registers_adhoc_commands_plugin(self) -> None:
         self.assertIn("xep_0050", self.xmpp.plugin)
 
@@ -166,6 +176,9 @@ class ClientIdentityTests(unittest.IsolatedAsyncioTestCase):
         async def get_roster() -> None:
             order.append("roster")
 
+        async def muc_start() -> None:
+            order.append("mucs")
+
         def register_adhoc() -> None:
             order.append("adhoc")
 
@@ -174,10 +187,13 @@ class ClientIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.xmpp.plugin["xep_0115"].update_caps = update_caps
         self.xmpp.send_presence = send_presence  # type: ignore[method-assign]
         self.xmpp.get_roster = get_roster  # type: ignore[method-assign]
+        self.xmpp.mucs.start = muc_start  # type: ignore[method-assign]
 
         await self.xmpp.start(None)
 
-        self.assertEqual(order, ["advertise", "adhoc", "caps", "presence", "roster"])
+        self.assertEqual(
+            order, ["advertise", "adhoc", "caps", "presence", "roster", "mucs"]
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from xmpp_utilities.__main__ import (
     parse_args,
     resolve_config_path,
 )
+from xmpp_utilities.muc import InviteConfig
 
 MISSING_DEFAULT = Path("/nonexistent/xmpp-utilities.toml")
 
@@ -187,7 +188,7 @@ class AppConfigLoadTests(unittest.TestCase):
                     [
                         'jid = "bot@example.org"',
                         'password = "secret"',
-                        "[invite]",
+                        "[other]",
                         "enabled = true",
                     ]
                 ),
@@ -236,3 +237,111 @@ class AppConfigLoadTests(unittest.TestCase):
             )
             config = load_config(default_path=default_path)
             self.assertEqual(config.jid, "bot@example.org")
+
+    def test_invite_defaults_are_disabled_and_unlimited(self) -> None:
+        config = load_config(
+            environ={
+                "XMPP_UTILS_JID": "bot@example.org",
+                "XMPP_UTILS_PASSWORD": "secret",
+            }
+        )
+        self.assertEqual(config.invite, InviteConfig())
+
+    def test_load_invite_table_from_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_toml(
+                Path(tmp),
+                "\n".join(
+                    [
+                        'jid = "bot@example.org"',
+                        'password = "secret"',
+                        "[invite]",
+                        "enabled = true",
+                        "persist = false",
+                        "max_rooms = 8",
+                        'allow_from = [" alice@example.org "]',
+                        'allow_domains = ["trusted.example.org"]',
+                        'deny_from = ["spammer@example.org"]',
+                        'allow_muc_hosts = ["muc.example.org"]',
+                    ]
+                ),
+            )
+            config = load_config(path)
+            self.assertEqual(
+                config.invite,
+                InviteConfig(
+                    enabled=True,
+                    persist=False,
+                    max_rooms=8,
+                    allow_from=("alice@example.org",),
+                    allow_domains=("trusted.example.org",),
+                    deny_from=("spammer@example.org",),
+                    allow_muc_hosts=("muc.example.org",),
+                ),
+            )
+
+    def test_invite_env_overlays_individual_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_toml(
+                Path(tmp),
+                "\n".join(
+                    [
+                        'jid = "bot@example.org"',
+                        'password = "secret"',
+                        "[invite]",
+                        "enabled = false",
+                        'allow_from = ["alice@example.org"]',
+                    ]
+                ),
+            )
+            config = load_config(
+                path,
+                environ={"XMPP_UTILS_INVITE_ENABLED": "true"},
+            )
+            self.assertTrue(config.invite.enabled)
+            self.assertEqual(config.invite.allow_from, ("alice@example.org",))
+
+    def test_invite_env_parses_lists_and_max_rooms(self) -> None:
+        config = load_config(
+            environ={
+                "XMPP_UTILS_JID": "bot@example.org",
+                "XMPP_UTILS_PASSWORD": "secret",
+                "XMPP_UTILS_INVITE_ENABLED": "yes",
+                "XMPP_UTILS_INVITE_PERSIST": "0",
+                "XMPP_UTILS_INVITE_MAX_ROOMS": "3",
+                "XMPP_UTILS_INVITE_ALLOW_FROM": "a@example.org, b@example.org",
+                "XMPP_UTILS_INVITE_ALLOW_DOMAINS": "example.org",
+                "XMPP_UTILS_INVITE_DENY_FROM": "bad@example.org",
+                "XMPP_UTILS_INVITE_ALLOW_MUC_HOSTS": "muc.example.org",
+            }
+        )
+        self.assertEqual(
+            config.invite,
+            InviteConfig(
+                enabled=True,
+                persist=False,
+                max_rooms=3,
+                allow_from=("a@example.org", "b@example.org"),
+                allow_domains=("example.org",),
+                deny_from=("bad@example.org",),
+                allow_muc_hosts=("muc.example.org",),
+            ),
+        )
+
+    def test_invite_max_rooms_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_toml(
+                Path(tmp),
+                'jid = "bot@example.org"\npassword = "secret"\n[invite]\nmax_rooms = 0\n',
+            )
+            with self.assertRaisesRegex(ValueError, "invite.max_rooms"):
+                load_config(path)
+
+    def test_invite_must_be_a_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_toml(
+                Path(tmp),
+                'jid = "bot@example.org"\npassword = "secret"\ninvite = true\n',
+            )
+            with self.assertRaisesRegex(ValueError, "invite must be a table"):
+                load_config(path)

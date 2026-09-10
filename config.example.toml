@@ -9,3 +9,14 @@ mucs = [
   "offtopic@room.telepath.im",
   "bot-testing@room.telepath.im",
 ]
+
+# Off by default. Empty allowlists mean anyone can invite once enabled.
+[invite]
+enabled = false
+persist = true
+# max_rooms = 32
+# allow_from = ["alice@example.org"]
+# allow_domains = ["example.org"]
+# deny_from = []
+# allow_muc_hosts = ["room.telepath.im"]
+

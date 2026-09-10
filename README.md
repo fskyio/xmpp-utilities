@@ -5,7 +5,10 @@ XMPP Utilities is a simple XMPP bot that provides various diagnostic and informa
 ## Features
 
 The bot responds to `!xmpp` commands in both direct
-messages and configured Multi-User Chats (MUCs). The same
+messages and Multi-User Chats (MUCs). Rooms can be listed
+in config and, if invites are enabled, the bot will also
+join rooms it is invited to. Invited rooms are remembered
+as PEP bookmarks on the bot account (XEP-0402). The same
 diagnostics are also available as [XEP-0050](https://xmpp.org/extensions/xep-0050.html)
 ad-hoc commands on the bot's full JID.
 
@@ -62,6 +65,15 @@ mucs = [
   "offtopic@room.telepath.im",
   "bot-testing@room.telepath.im",
 ]
+
+[invite]
+enabled = false
+persist = true
+# max_rooms = 32
+# allow_from = ["alice@example.org"]
+# allow_domains = ["example.org"]
+# deny_from = []
+# allow_muc_hosts = ["room.telepath.im"]
 ```
 
 The file is resolved in this order:
@@ -78,9 +90,20 @@ The file is resolved in this order:
 |------|-------------|-------------|----------|---------|
 | `jid` | `XMPP_UTILS_JID` | The JID of the bot account (e.g., `bot@example.com`). | Yes | - |
 | `password` | `XMPP_UTILS_PASSWORD` | The password for the bot account. | Yes | - |
-| `mucs` | `XMPP_UTILS_MUCS` | MUC JIDs to join. TOML uses an array; the env var is comma-separated. | No | - |
+| `mucs` | `XMPP_UTILS_MUCS` | MUC JIDs to join. TOML uses an array; the env var is comma-separated. These rooms are always joined and are not stored as bookmarks. | No | - |
 | `nick` | `XMPP_UTILS_NICK` | The nickname to use in MUCs. | No | `XMPP Utilities` |
+| `invite.enabled` | `XMPP_UTILS_INVITE_ENABLED` | Accept direct (XEP-0249) and mediated MUC invites. | No | `false` |
+| `invite.persist` | `XMPP_UTILS_INVITE_PERSIST` | Remember invited rooms as PEP bookmarks (XEP-0402) on the bot account. | No | `true` |
+| `invite.max_rooms` | `XMPP_UTILS_INVITE_MAX_ROOMS` | Cap on invited/bookmarked rooms. Omitted means unlimited. | No | unlimited |
+| `invite.allow_from` | `XMPP_UTILS_INVITE_ALLOW_FROM` | Inviter bare JIDs that may invite the bot. Empty with no domain list means anyone. | No | - |
+| `invite.allow_domains` | `XMPP_UTILS_INVITE_ALLOW_DOMAINS` | Inviter domains that may invite the bot. | No | - |
+| `invite.deny_from` | `XMPP_UTILS_INVITE_DENY_FROM` | Inviter bare JIDs that are always refused. | No | - |
+| `invite.allow_muc_hosts` | `XMPP_UTILS_INVITE_ALLOW_MUC_HOSTS` | Conference hosts the bot may be invited into. Empty means any host. | No | - |
 | — | `XMPP_UTILS_CONFIG` | Path to a TOML config file. | No | `./xmpp-utilities.toml` |
+
+Boolean env values accept `true`/`false`, `1`/`0`, `yes`/`no`, and `on`/`off`. List env vars are comma-separated.
+
+When invites are enabled, use a dedicated bot account. Invited rooms persist as account bookmarks, so a container does not need a volume to rejoin them after restart. A kick or ban unbookmarks the room; a new invite joins it again. Configured `mucs` are never written to PEP.
 
 ## Requirements
 
