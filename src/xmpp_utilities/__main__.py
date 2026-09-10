@@ -31,7 +31,7 @@ from .dane import (
 )
 from .muc import InviteConfig, MucManager, parse_bool, parse_jid_csv, parse_jid_list, parse_max_rooms
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
 __repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
 __issues__ = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
