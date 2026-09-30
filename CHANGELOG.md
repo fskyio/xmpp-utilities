@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Packaging for installation from PyPI and FSKY Foundry (`pip` / `pipx`), including an `xmpp-utilities` console script.
+- Packaging for installation from PyPI and Gitfield (`pip` / `pipx`), including an `xmpp-utilities` console script.
 
 ### Changed
 
@@ -60,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MUC support via configured room JIDs.
 - Container image and a systemd Quadlet unit.
 
-[unreleased]: https://foundry.fsky.io/fsky/xmpp-utilities/compare/1.3.0...HEAD
-[1.3.0]: https://foundry.fsky.io/fsky/xmpp-utilities/compare/1.2.0...HEAD
-[1.2.0]: https://foundry.fsky.io/fsky/xmpp-utilities/compare/1.1.0...1.2.0
-[1.1.0]: https://foundry.fsky.io/fsky/xmpp-utilities/compare/1.0.0...1.1.0
-[1.0.0]: https://foundry.fsky.io/fsky/xmpp-utilities/releases/tag/1.0.0
+[unreleased]: https://gitfield.org/fsky/xmpp-utilities/compare/1.3.0...HEAD
+[1.3.0]: https://gitfield.org/fsky/xmpp-utilities/compare/1.2.0...HEAD
+[1.2.0]: https://gitfield.org/fsky/xmpp-utilities/compare/1.1.0...1.2.0
+[1.1.0]: https://gitfield.org/fsky/xmpp-utilities/compare/1.0.0...1.1.0
+[1.0.0]: https://gitfield.org/fsky/xmpp-utilities/releases/tag/1.0.0

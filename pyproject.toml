@@ -31,8 +31,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://fsky.io/projects/xmpp-utilities/"
-Repository = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
-Issues = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
+Repository = "https://gitfield.org/fsky/xmpp-utilities.git"
+Issues = "https://gitfield.org/fsky/xmpp-utilities/issues"
 
 [project.scripts]
 xmpp-utilities = "xmpp_utilities.__main__:main"
@@ -45,7 +45,7 @@ build-backend = "hatchling.build"
 "src/xmpp_utilities/avatar.png" = "xmpp_utilities/avatar.png"
 
 [[tool.uv.index]]
-name = "foundry"
-url = "https://foundry.fsky.io/api/packages/fsky/pypi/simple/"
-publish-url = "https://foundry.fsky.io/api/packages/fsky/pypi/"
+name = "gitfield"
+url = "https://gitfield.org/api/packages/fsky/pypi/simple/"
+publish-url = "https://gitfield.org/api/packages/fsky/pypi/"
 explicit = true

@@ -33,8 +33,8 @@ from .muc import InviteConfig, MucManager, parse_bool, parse_jid_csv, parse_jid_
 
 __version__ = "1.3.0"
 __homepage__ = "https://fsky.io/projects/xmpp-utilities/"
-__repository__ = "https://foundry.fsky.io/fsky/xmpp-utilities.git"
-__issues__ = "https://foundry.fsky.io/fsky/xmpp-utilities/issues"
+__repository__ = "https://gitfield.org/fsky/xmpp-utilities.git"
+__issues__ = "https://gitfield.org/fsky/xmpp-utilities/issues"
 __license__ = "0BSD"
 
 BOT_NAME = "XMPP Utilities"
